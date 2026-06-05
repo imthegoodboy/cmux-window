@@ -135,6 +135,21 @@ check_windows_scope_gate() {
     exit 1
   fi
 
+  if ! grep -Fq 'PUSH_BEFORE_SHA: ${{ github.event.before }}' "$CI_FILE"; then
+    echo "FAIL: ci.yml must classify push scope from github.event.before before scheduling paid macOS jobs"
+    exit 1
+  fi
+
+  if ! grep -Fq 'push)' "$CI_FILE"; then
+    echo "FAIL: ci.yml must scope push events separately from pull_request events"
+    exit 1
+  fi
+
+  if grep -Fq 'if [ "$EVENT_NAME" != "pull_request" ]; then' "$CI_FILE"; then
+    echo "FAIL: ci.yml must not force every non-PR CI run onto paid macOS runners"
+    exit 1
+  fi
+
   for job in tests tests-build-and-lag release-build ui-regressions; do
     if ! awk -v job="$job" '
       $0 ~ "^  "job":" { in_job=1; saw_needs=0; saw_if=0; next }
