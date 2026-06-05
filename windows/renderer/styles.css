@@ -10218,7 +10218,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 .layout-preview-meta {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(96px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(128px, 100%), 1fr));
   gap: var(--space-1);
 }
 
@@ -10258,6 +10258,14 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   flex: 1 1 auto;
   color: var(--color-text);
   font-size: 11px;
+}
+
+.layout-preview-meta span:not(.is-summary) {
+  display: none;
+}
+
+.layout-preview-meta span.is-summary {
+  display: flex;
 }
 
 .workspace-chrome-preset-grid {
@@ -10377,9 +10385,37 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 }
 
 .workspace-chrome-preset-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  justify-content: flex-end;
   gap: var(--space-1);
+}
+
+.workspace-chrome-preset-actions .settings-action,
+.pane-layout-preset-actions .settings-action {
+  width: auto;
+  min-width: 70px;
+  height: 26px;
+  padding-inline: 8px;
+  background: color-mix(in oklch, var(--color-pane-warm) 72%, transparent);
+  font-size: 11px;
+}
+
+.workspace-chrome-preset-actions .settings-action.has-icon,
+.pane-layout-preset-actions .settings-action.has-icon {
+  grid-template-columns: 14px minmax(0, auto);
+  gap: 5px;
+}
+
+.workspace-chrome-preset-actions .settings-action-icon,
+.pane-layout-preset-actions .settings-action-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.workspace-chrome-preset-actions .settings-action-icon svg,
+.pane-layout-preset-actions .settings-action-icon svg {
+  width: 13px;
+  height: 13px;
 }
 
 @container (max-width: 330px) {
@@ -14090,8 +14126,8 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 }
 
 .pane-layout-preset-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  justify-content: flex-end;
   gap: var(--space-1);
 }
 
