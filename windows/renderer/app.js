@@ -24193,6 +24193,9 @@ function syncSettingsDisclosuresForSearch(query) {
   let mountedThisPass = 0;
   let remaining = 0;
   const mountBatchLimit = settingsDisclosureSearchMountBatchLimit();
+  for (const disclosure of elements.inspectorBody.querySelectorAll("[data-settings-open-on-search]")) {
+    if ("open" in disclosure && !disclosure.open) disclosure.open = true;
+  }
   for (const disclosure of elements.inspectorBody.querySelectorAll(".settings-disclosure")) {
     if (disclosure.dataset.disclosureMounted === "true") continue;
     if (mountedThisPass >= mountBatchLimit) {
@@ -28568,29 +28571,6 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
       <span><b>Terminal</b><em data-quick-terminal></em></span>
       <span><b>Performance</b><em data-quick-performance></em></span>
     </div>
-    <div data-quick-profile-data-controls></div>
-    <div data-quick-saved-profile-controls></div>
-    <div data-quick-data-maintenance-controls></div>
-    <div data-quick-workspace-controls></div>
-    <div data-quick-recent-folder-controls></div>
-    <div data-quick-layout-controls></div>
-    <div data-quick-blueprint-controls></div>
-    <div data-quick-saved-blueprint-controls></div>
-    <div data-quick-pane-controls></div>
-    <div data-quick-pane-preset-controls></div>
-    <div data-quick-terminal-controls></div>
-    <div data-quick-recent-command-controls></div>
-    <div data-quick-command-controls></div>
-    <div data-quick-saved-command-controls></div>
-    <div data-quick-browser-controls></div>
-    <div data-quick-recent-browser-controls></div>
-    <div data-quick-browser-tab-controls></div>
-    <div data-quick-look-controls></div>
-    <div data-quick-look-pack-controls></div>
-    <div data-quick-color-target-controls></div>
-    <div data-quick-color-preset-controls></div>
-    <div data-quick-saved-color-controls></div>
-    <div data-quick-color-controls></div>
     <button class="quick-overview-speed" type="button" data-performance-status>
       <span class="quick-overview-speed-icon" aria-hidden="true"></span>
       <span class="quick-overview-speed-copy">
@@ -28602,42 +28582,82 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
         <span data-quick-speed-action></span>
       </span>
     </button>
-    <div data-quick-performance-controls></div>
-    <div data-quick-performance-health-controls></div>
-    <div data-quick-performance-preset-controls></div>
-    <div data-quick-background-controls></div>
-    <div data-quick-background-preset-controls></div>
-    <div data-quick-saved-background-controls></div>
-    <div data-quick-background-tune-controls></div>
-    <div class="quick-overview-scope" aria-label="Background scope">
-      <button class="quick-overview-scope-item" type="button" data-quick-scope-item="app">
-        <span class="quick-overview-scope-preview" aria-hidden="true"></span>
-        <span class="quick-overview-scope-copy"><b>App image</b><em data-quick-scope-app></em></span>
-      </button>
-      <button class="quick-overview-scope-item" type="button" data-quick-scope-item="pane">
-        <span class="quick-overview-scope-preview" aria-hidden="true"></span>
-        <span class="quick-overview-scope-copy"><b>Active terminal</b><em data-quick-scope-pane></em></span>
-      </button>
-      <button class="quick-overview-scope-item" type="button" data-quick-scope-item="all">
-        <span class="quick-overview-scope-preview" aria-hidden="true"></span>
-        <span class="quick-overview-scope-copy"><b>All terminals</b><em data-quick-scope-all></em></span>
-      </button>
-    </div>
-    <div class="quick-overview-library" data-quick-library>
-      <div class="quick-overview-library-head">
-        <span class="quick-overview-library-copy">
-          <b>Saved customization</b>
-          <em data-quick-library-summary></em>
+    <details class="quick-overview-tools" data-quick-tools data-settings-open-on-search>
+      <summary class="quick-overview-tools-summary">
+        <span class="quick-overview-tools-copy">
+          <b>Setup controls</b>
+          <em>Actions, colors, background, data</em>
         </span>
-        <span class="quick-overview-library-actions">
-          <button class="quick-overview-library-action" type="button" data-quick-library-action="copy">Copy saved</button>
-          <button class="quick-overview-library-action" type="button" data-quick-library-action="paste">Paste saved</button>
-          <button class="quick-overview-library-action" type="button" data-quick-library-action="data">Manage</button>
-        </span>
+        <span class="quick-overview-tools-count">Open</span>
+      </summary>
+      <div class="quick-overview-tools-body">
+        <div data-quick-profile-data-controls></div>
+        <div data-quick-saved-profile-controls></div>
+        <div data-quick-data-maintenance-controls></div>
+        <div data-quick-workspace-controls></div>
+        <div data-quick-recent-folder-controls></div>
+        <div data-quick-layout-controls></div>
+        <div data-quick-blueprint-controls></div>
+        <div data-quick-saved-blueprint-controls></div>
+        <div data-quick-pane-controls></div>
+        <div data-quick-pane-preset-controls></div>
+        <div data-quick-terminal-controls></div>
+        <div data-quick-recent-command-controls></div>
+        <div data-quick-command-controls></div>
+        <div data-quick-saved-command-controls></div>
+        <div data-quick-browser-controls></div>
+        <div data-quick-recent-browser-controls></div>
+        <div data-quick-browser-tab-controls></div>
+        <div data-quick-look-controls></div>
+        <div data-quick-look-pack-controls></div>
+        <div data-quick-color-target-controls></div>
+        <div data-quick-color-preset-controls></div>
+        <div data-quick-saved-color-controls></div>
+        <div data-quick-color-controls></div>
+        <div data-quick-performance-controls></div>
+        <div data-quick-performance-health-controls></div>
+        <div data-quick-performance-preset-controls></div>
+        <div data-quick-background-controls></div>
+        <div data-quick-background-preset-controls></div>
+        <div data-quick-saved-background-controls></div>
+        <div data-quick-background-tune-controls></div>
+        <div class="quick-overview-scope" aria-label="Background scope">
+          <button class="quick-overview-scope-item" type="button" data-quick-scope-item="app">
+            <span class="quick-overview-scope-preview" aria-hidden="true"></span>
+            <span class="quick-overview-scope-copy"><b>App image</b><em data-quick-scope-app></em></span>
+          </button>
+          <button class="quick-overview-scope-item" type="button" data-quick-scope-item="pane">
+            <span class="quick-overview-scope-preview" aria-hidden="true"></span>
+            <span class="quick-overview-scope-copy"><b>Active terminal</b><em data-quick-scope-pane></em></span>
+          </button>
+          <button class="quick-overview-scope-item" type="button" data-quick-scope-item="all">
+            <span class="quick-overview-scope-preview" aria-hidden="true"></span>
+            <span class="quick-overview-scope-copy"><b>All terminals</b><em data-quick-scope-all></em></span>
+          </button>
+        </div>
+        <div class="quick-overview-library" data-quick-library>
+          <div class="quick-overview-library-head">
+            <span class="quick-overview-library-copy">
+              <b>Saved customization</b>
+              <em data-quick-library-summary></em>
+            </span>
+            <span class="quick-overview-library-actions">
+              <button class="quick-overview-library-action" type="button" data-quick-library-action="copy">Copy saved</button>
+              <button class="quick-overview-library-action" type="button" data-quick-library-action="paste">Paste saved</button>
+              <button class="quick-overview-library-action" type="button" data-quick-library-action="data">Manage</button>
+            </span>
+          </div>
+          <div class="quick-overview-library-grid" data-quick-library-grid></div>
+        </div>
       </div>
-      <div class="quick-overview-library-grid" data-quick-library-grid></div>
-    </div>
+    </details>
   `;
+  const tools = panel.querySelector("[data-quick-tools]");
+  tools.open = Boolean(normalizeSettingsQuery(state.settingsQuery));
+  tools.dataset.settingsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes");
+  tools.addEventListener("toggle", () => {
+    if (!tools.open && normalizeSettingsQuery(state.settingsQuery)) state.settingsSearchDisclosuresOpenVersion = 0;
+  });
   panel.querySelector(".quick-overview-subtitle").textContent = folder;
   const saveSetup = panel.querySelector('[data-quick-setup-action="save"]');
   saveSetup.querySelector(".quick-overview-save-icon").innerHTML = quickActionIconMarkup("profiles");

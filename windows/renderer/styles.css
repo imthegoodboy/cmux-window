@@ -11239,6 +11239,95 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   font-size: 12px;
 }
 
+.quick-overview-tools {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid color-mix(in oklch, var(--color-line) 76%, transparent);
+  border-radius: var(--radius-1);
+  background: color-mix(in oklch, var(--color-pane) 74%, transparent);
+}
+
+.quick-overview-tools-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 6px 8px;
+  color: var(--color-text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.quick-overview-tools-summary::-webkit-details-marker {
+  display: none;
+}
+
+.quick-overview-tools-summary:hover,
+.quick-overview-tools-summary:focus-visible {
+  background: color-mix(in oklch, var(--color-pane-warm) 64%, transparent);
+}
+
+.quick-overview-tools-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.quick-overview-tools-copy b,
+.quick-overview-tools-copy em {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-style: normal;
+}
+
+.quick-overview-tools-copy b {
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.quick-overview-tools-copy em {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.quick-overview-tools-count {
+  min-width: 58px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-1);
+  background: var(--color-pane);
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.quick-overview-tools[open] .quick-overview-tools-count {
+  border-color: color-mix(in oklch, var(--color-accent) 46%, var(--color-line) 54%);
+  background: color-mix(in oklch, var(--color-accent) 10%, var(--color-pane) 90%);
+  color: var(--color-text);
+  font-size: 0;
+}
+
+.quick-overview-tools[open] .quick-overview-tools-count::after {
+  content: "Close";
+  font-size: 11px;
+}
+
+.quick-overview-tools-body {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+  padding: 0 var(--space-1) var(--space-1);
+}
+
 .quick-overview-controls,
 .quick-overview-speed,
 .quick-overview-scope,
