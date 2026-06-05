@@ -24163,7 +24163,9 @@ function settingsSectionTitle(section) {
 function settingsSearchTargetScore(item, sectionTitle = "", tokens = []) {
   if (!item) return -Infinity;
   let score = 10;
-  if (tokens.length && settingsSearchMatchesNormalized(sectionTitle, tokens)) score += 180;
+  if (tokens.length && settingsSearchMatchesNormalized(sectionTitle, tokens)) {
+    score += item.classList.contains("settings-section") ? 1400 : 180;
+  }
   if (item.classList.contains("setting-row")) score += 90;
   if (item.classList.contains("settings-command-card")) score += 85;
   if (item.classList.contains("settings-actions")) score += 74;
