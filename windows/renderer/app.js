@@ -24192,19 +24192,9 @@ function settingsDisclosureSearchText(disclosure) {
   ].join(" "));
 }
 
-function settingsDisclosureSectionSearchText(disclosure) {
-  const section = disclosure?.closest?.(".settings-section");
-  if (!section) return "";
-  return normalizeSettingsQuery([
-    section.dataset.settingsSearch || "",
-    settingsSectionTitle(section)
-  ].join(" "));
-}
-
 function settingsDisclosureMatchesSearch(disclosure, tokens) {
   if (!tokens.length) return false;
-  return settingsSearchMatchesNormalized(settingsDisclosureSearchText(disclosure), tokens)
-    || settingsSearchMatchesNormalized(settingsDisclosureSectionSearchText(disclosure), tokens);
+  return settingsSearchMatchesNormalized(settingsDisclosureSearchText(disclosure), tokens);
 }
 
 function closeSettingsDisclosureOpenedBySearch(disclosure) {
@@ -28722,10 +28712,12 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
     </details>
   `;
   const tools = panel.querySelector("[data-quick-tools]");
-  const openingToolsForSearch = Boolean(normalizeSettingsQuery(state.settingsQuery));
+  const toolsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes customize saved library actions");
+  tools.dataset.settingsSearch = toolsSearch;
+  const query = normalizeSettingsQuery(state.settingsQuery);
+  const openingToolsForSearch = Boolean(query && settingsSearchMatchesNormalized(toolsSearch, settingsSearchTokensNormalized(query)));
   tools.open = openingToolsForSearch;
   if (openingToolsForSearch) tools.dataset.settingsOpenedBySearch = "true";
-  tools.dataset.settingsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes customize saved library actions");
   tools.addEventListener("toggle", () => {
     if (!tools.open && normalizeSettingsQuery(state.settingsQuery)) {
       state.settingsSearchDisclosuresOpenVersion = 0;
