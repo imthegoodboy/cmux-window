@@ -24183,6 +24183,10 @@ function setSettingsSearchLayoutNeeded(needed) {
 
 function syncSettingsDisclosuresForSearch(query) {
   if (!query) {
+    for (const disclosure of elements.inspectorBody.querySelectorAll('[data-settings-open-on-search][data-settings-opened-by-search="true"]')) {
+      if ("open" in disclosure) disclosure.open = false;
+      delete disclosure.dataset.settingsOpenedBySearch;
+    }
     state.settingsSearchDisclosuresOpenVersion = 0;
     return { mountedContent: false, complete: true };
   }
@@ -24194,7 +24198,10 @@ function syncSettingsDisclosuresForSearch(query) {
   let remaining = 0;
   const mountBatchLimit = settingsDisclosureSearchMountBatchLimit();
   for (const disclosure of elements.inspectorBody.querySelectorAll("[data-settings-open-on-search]")) {
-    if ("open" in disclosure && !disclosure.open) disclosure.open = true;
+    if ("open" in disclosure && !disclosure.open) {
+      disclosure.dataset.settingsOpenedBySearch = "true";
+      disclosure.open = true;
+    }
   }
   for (const disclosure of elements.inspectorBody.querySelectorAll(".settings-disclosure")) {
     if (disclosure.dataset.disclosureMounted === "true") continue;
@@ -28653,7 +28660,9 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
     </details>
   `;
   const tools = panel.querySelector("[data-quick-tools]");
-  tools.open = Boolean(normalizeSettingsQuery(state.settingsQuery));
+  const openingToolsForSearch = Boolean(normalizeSettingsQuery(state.settingsQuery));
+  tools.open = openingToolsForSearch;
+  if (openingToolsForSearch) tools.dataset.settingsOpenedBySearch = "true";
   tools.dataset.settingsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes");
   tools.addEventListener("toggle", () => {
     if (!tools.open && normalizeSettingsQuery(state.settingsQuery)) state.settingsSearchDisclosuresOpenVersion = 0;
