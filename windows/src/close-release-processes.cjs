@@ -5,17 +5,17 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const releaseExe = path.resolve(__dirname, "..", "release", "win-unpacked", "cmux.exe");
+const releaseRoot = path.resolve(__dirname, "..", "release", "win-unpacked");
 const script = `
 $ErrorActionPreference = "Stop"
-$releaseExe = [System.IO.Path]::GetFullPath($env:CMUX_RELEASE_EXE)
-$releaseRoot = [System.IO.Path]::GetDirectoryName($releaseExe)
+$releaseRoot = [System.IO.Path]::GetFullPath($env:CMUX_RELEASE_ROOT).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+$releaseRootPrefix = $releaseRoot + [System.IO.Path]::DirectorySeparatorChar
 $targets = @()
-Get-Process -Name cmux -ErrorAction SilentlyContinue | ForEach-Object {
+Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
   try {
     if ($_.Path) {
       $processPath = [System.IO.Path]::GetFullPath($_.Path)
-      if ($processPath -ieq $releaseExe -or $processPath.StartsWith($releaseRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+      if ($processPath.StartsWith($releaseRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         $targets += $_
       }
     }
@@ -32,17 +32,20 @@ foreach ($process in $targets) {
   }
 }
 if ($targets.Count -gt 0) {
-  Write-Output ("Stopped {0} running unpacked cmux process(es)." -f $targets.Count)
+  Write-Output ("Stopped {0} running unpacked release process(es)." -f $targets.Count)
 }
-if ([System.IO.File]::Exists($releaseExe)) {
-  $deadline = [DateTime]::UtcNow.AddSeconds(8)
-  while ([DateTime]::UtcNow -lt $deadline) {
-    try {
-      $stream = [System.IO.File]::Open($releaseExe, "Open", "ReadWrite", "None")
-      $stream.Close()
-      break
-    } catch {
-      Start-Sleep -Milliseconds 200
+if ([System.IO.Directory]::Exists($releaseRoot)) {
+  Get-ChildItem -Path $releaseRoot -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+    $exePath = $_.FullName
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    while ([DateTime]::UtcNow -lt $deadline) {
+      try {
+        $stream = [System.IO.File]::Open($exePath, "Open", "ReadWrite", "None")
+        $stream.Close()
+        break
+      } catch {
+        Start-Sleep -Milliseconds 200
+      }
     }
   }
 }
@@ -59,7 +62,7 @@ const result = spawnSync("powershell.exe", [
   encoding: "utf8",
   env: {
     ...process.env,
-    CMUX_RELEASE_EXE: releaseExe
+    CMUX_RELEASE_ROOT: releaseRoot
   }
 });
 
