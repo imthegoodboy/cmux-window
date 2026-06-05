@@ -6762,7 +6762,8 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 .inspector-body {
   container-type: inline-size;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--space-4);
 }
 
@@ -6820,6 +6821,12 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   border-bottom: 1px solid color-mix(in oklch, var(--color-line) 70%, transparent);
   background: var(--color-rail-surface);
   box-shadow: none;
+}
+
+.settings-react-host {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .settings-react-shell .settings-search,
@@ -6885,6 +6892,8 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 }
 
 .settings-section {
+  min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
@@ -7164,6 +7173,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 }
 
 .setting-row {
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
   gap: var(--space-2);
@@ -7693,13 +7703,13 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   grid-template-columns: minmax(0, 1fr) minmax(68px, auto) minmax(92px, auto) minmax(88px, auto) minmax(80px, auto) minmax(74px, auto);
 }
 
-@container (max-width: 560px) {
+@container (max-width: 680px) {
   .active-pane-title-control,
   .active-pane-title-control.has-page-title,
   .workspace-name-control,
   .workspace-name-control.has-page-title,
   .workspace-name-control.has-branch-title {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .active-pane-title-control .setting-control,
@@ -11347,8 +11357,10 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   position: relative;
   isolation: isolate;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, min(44%, 360px));
   align-items: center;
   gap: 6px;
   padding: 6px 7px 7px 13px;
@@ -11420,15 +11432,15 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   position: relative;
   z-index: 1;
   min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 4px;
-  max-width: min(62vw, 620px);
+  max-width: 100%;
   padding: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
   overscroll-behavior-inline: contain;
   scroll-padding-inline: 4px 24px;
   scrollbar-width: thin;
@@ -11446,7 +11458,8 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 }
 
 .quick-overview-controls-actions .settings-action {
-  flex: 0 0 auto;
+  flex: 1 1 78px;
+  min-width: 0;
   max-width: 124px;
   height: 24px;
   padding: 0 6px;
