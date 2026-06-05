@@ -733,6 +733,7 @@ const browserHomeMigrationStorageKey = "cmux.browserHomeGoogleMigration";
 const browserReadableChromeMigrationStorageKey = "cmux.browserReadableChromeMigration";
 const browserPaneReadableSplitMigrationStoragePrefix = "cmux.browserPaneReadableSplitMigration.";
 const sidebarBranchMigrationStorageKey = "cmux.sidebarBranchQuietMigration";
+const addTabHiddenMigrationStorageKey = "cmux.addTabHiddenMigration";
 const settingsPanelWidthMigrationStorageKey = "cmux.settingsPanelReadableWidthMigration";
 const settingsPanelLaptopWidthMigrationStorageKey = "cmux.settingsPanelLaptopWidthMigration";
 const settingsPanelWideWidthMigrationStorageKey = "cmux.settingsPanelWideWidthMigration";
@@ -1780,6 +1781,17 @@ function loadSettings() {
   ) {
     parsed.sidebarBranchMode = defaultSettings.sidebarBranchMode;
     localStorage.setItem(sidebarBranchMigrationStorageKey, "1");
+    migrated = true;
+  }
+  if (
+    localStorage.getItem(addTabHiddenMigrationStorageKey) !== "1"
+    && parsed
+    && typeof parsed === "object"
+    && !Array.isArray(parsed)
+    && (!Object.hasOwn(parsed, "addTabStyle") || ["compact", "labeled"].includes(parsed.addTabStyle))
+  ) {
+    parsed.addTabStyle = defaultSettings.addTabStyle;
+    localStorage.setItem(addTabHiddenMigrationStorageKey, "1");
     migrated = true;
   }
   if (
@@ -7908,6 +7920,7 @@ function applyTerminalThemeIfChanged(session, panel = null, options = {}) {
   const signature = terminalThemeSignature(panel);
   if (!options.force && session.terminalThemeSignature === signature) return false;
   session.term.options.theme = terminalTheme(panel);
+  session.term.refresh?.(0, Math.max(0, (session.term.rows || 1) - 1));
   session.terminalThemeSignature = signature;
   return true;
 }
@@ -12439,6 +12452,7 @@ function updatePaneChromeState(pane, panel, workspace) {
   if (!pane || !panel) return;
   const parts = paneParts(pane);
   setStylePropertyIfChanged(pane, "--panel-color", panel.color || workspace?.color || "var(--color-accent)");
+  setStylePropertyIfChanged(pane, "--pane-terminal-background", state.settings.terminalBackground || terminalColorDefaults.background);
   const paneBackgroundImage = panel.type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "";
   toggleClassIfChanged(pane, "has-pane-background", Boolean(paneBackgroundImage));
   setStylePropertyIfChanged(pane, "--pane-background-image", backgroundCss(paneBackgroundImage));
@@ -43931,7 +43945,7 @@ const workspaceChromePresets = [
       tabSize: "compact",
       tabCloseMode: "minimal",
       tabActiveStyle: "subtle",
-      addTabStyle: "compact",
+      addTabStyle: "hidden",
       cornerStyle: "crisp",
       paneDividerSize: "slim",
       paneDividerStyle: "line",
@@ -44043,7 +44057,7 @@ const workspaceChromePresets = [
       tabSize: "roomy",
       tabCloseMode: "always",
       tabActiveStyle: "filled",
-      addTabStyle: "labeled",
+      addTabStyle: "hidden",
       cornerStyle: "round",
       paneDividerSize: "wide",
       paneDividerStyle: "grip",
@@ -44099,7 +44113,7 @@ const workspaceChromePresets = [
       tabSize: "balanced",
       tabCloseMode: "minimal",
       tabActiveStyle: "line",
-      addTabStyle: "compact",
+      addTabStyle: "hidden",
       cornerStyle: "crisp",
       paneDividerSize: "slim",
       paneDividerStyle: "minimal",

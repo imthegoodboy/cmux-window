@@ -35,12 +35,12 @@ if ($targets.Count -gt 0) {
   Write-Output ("Stopped {0} running unpacked release process(es)." -f $targets.Count)
 }
 if ([System.IO.Directory]::Exists($releaseRoot)) {
-  Get-ChildItem -Path $releaseRoot -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-    $exePath = $_.FullName
+  Get-ChildItem -Path $releaseRoot -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+    $filePath = $_.FullName
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     while ([DateTime]::UtcNow -lt $deadline) {
       try {
-        $stream = [System.IO.File]::Open($exePath, "Open", "ReadWrite", "None")
+        $stream = [System.IO.File]::Open($filePath, "Open", "ReadWrite", "None")
         $stream.Close()
         break
       } catch {
