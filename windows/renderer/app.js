@@ -19893,6 +19893,22 @@ function layoutSettingsPreviewPanel() {
       <span><b>Shape</b><em data-layout-preview-shape></em></span>
     </div>
   `;
+  for (const selector of [
+    "[data-layout-preview-toolbar]",
+    "[data-layout-preview-mode]",
+    "[data-layout-preview-tabs]",
+    "[data-layout-preview-pane-surface]",
+    "[data-layout-preview-pane-spacing]",
+    "[data-layout-preview-new-panes]",
+    "[data-layout-preview-sidebar]",
+    "[data-layout-preview-settings]",
+    "[data-layout-preview-status-style]",
+    "[data-layout-preview-active-pane]",
+    "[data-layout-preview-panes]",
+    "[data-layout-preview-split]"
+  ]) {
+    panel.querySelector(selector)?.closest("span")?.classList.add("is-summary");
+  }
   panel.querySelector("[data-layout-preview-toolbar]").textContent = optionLabel(toolbarModeOptions, settings.toolbarMode, settings.toolbarMode);
   panel.querySelector("[data-layout-preview-toolbar-labels]").textContent = optionLabel(toolbarLabelModeOptions, settings.toolbarLabelMode, settings.toolbarLabelMode);
   panel.querySelector("[data-layout-preview-topbar-style]").textContent = optionLabel(topbarStyleOptions, settings.topbarStyle, settings.topbarStyle);
