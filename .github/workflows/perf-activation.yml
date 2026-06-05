@@ -66,7 +66,7 @@ jobs:
           while IFS= read -r path; do
             [ -n "$path" ] || continue
             case "$path" in
-              windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|tests/test_ci_self_hosted_guard.sh)
+              windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|.github/workflows/nightly.yml|tests/test_ci_self_hosted_guard.sh|tests/test_nightly_universal_build.sh)
                 ;;
               *)
                 requires_activation=true

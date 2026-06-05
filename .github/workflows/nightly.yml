@@ -13,8 +13,8 @@ on:
 
 concurrency:
   group: nightly-build-${{ github.ref_name }}
-  # Queue concurrent runs instead of canceling them so no build is lost.
-  cancel-in-progress: false
+  # Main pushes replace stale queued nightlies; manual runs still queue.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: write
