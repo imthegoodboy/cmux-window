@@ -9,20 +9,42 @@ const releaseExe = path.resolve(__dirname, "..", "release", "win-unpacked", "cmu
 const script = `
 $ErrorActionPreference = "Stop"
 $releaseExe = [System.IO.Path]::GetFullPath($env:CMUX_RELEASE_EXE)
-$matches = @()
+$releaseRoot = [System.IO.Path]::GetDirectoryName($releaseExe)
+$targets = @()
 Get-Process -Name cmux -ErrorAction SilentlyContinue | ForEach-Object {
   try {
-    if ($_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -ieq $releaseExe)) {
-      $matches += $_
+    if ($_.Path) {
+      $processPath = [System.IO.Path]::GetFullPath($_.Path)
+      if ($processPath -ieq $releaseExe -or $processPath.StartsWith($releaseRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $targets += $_
+      }
     }
   } catch {
   }
 }
-foreach ($process in $matches) {
+foreach ($process in $targets) {
   Stop-Process -Id $process.Id -Force
 }
-if ($matches.Count -gt 0) {
-  Write-Output ("Stopped {0} running unpacked cmux process(es)." -f $matches.Count)
+foreach ($process in $targets) {
+  try {
+    Wait-Process -Id $process.Id -Timeout 8 -ErrorAction SilentlyContinue
+  } catch {
+  }
+}
+if ($targets.Count -gt 0) {
+  Write-Output ("Stopped {0} running unpacked cmux process(es)." -f $targets.Count)
+}
+if ([System.IO.File]::Exists($releaseExe)) {
+  $deadline = [DateTime]::UtcNow.AddSeconds(8)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    try {
+      $stream = [System.IO.File]::Open($releaseExe, "Open", "ReadWrite", "None")
+      $stream.Close()
+      break
+    } catch {
+      Start-Sleep -Milliseconds 200
+    }
+  }
 }
 exit 0
 `;

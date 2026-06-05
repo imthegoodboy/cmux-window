@@ -647,7 +647,9 @@ button {
 }
 
 .shell.performance-mode.has-background::before {
-  display: none;
+  filter: none;
+  transform: none;
+  opacity: min(var(--background-opacity, .16), .08);
 }
 
 .shell.performance-mode.has-background::after {
@@ -677,7 +679,9 @@ button {
 }
 
 .shell.performance-mode .pane.has-pane-background .terminal-host::before {
-  display: none;
+  filter: none;
+  transform: none;
+  opacity: min(var(--pane-background-opacity, .18), .1);
 }
 
 .shell.performance-mode .pane.has-pane-background .terminal-host .xterm::before {
