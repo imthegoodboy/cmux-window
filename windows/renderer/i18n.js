@@ -592,6 +592,8 @@ const windowsMessages = {
     "config.settingsPreset.simple.body": "Clean workspace chrome with compact rows and quiet tabs.",
     "config.settingsPreset.simpleFast": "Clean + Fast",
     "config.settingsPreset.simpleFast.body": "Simple chrome with speed tuning and fast terminal startup.",
+    "config.settingsPreset.crisp": "Crisp",
+    "config.settingsPreset.crisp.body": "Sharp high-contrast chrome with no blur or soft effects.",
     "config.settingsPreset.focus": "Focus",
     "config.settingsPreset.focus.body": "Tighter layout with quiet Harbor colors.",
     "config.settingsPreset.performance": "Performance",

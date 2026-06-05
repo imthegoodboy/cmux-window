@@ -17315,6 +17315,10 @@ function refreshSettingsInspectorSubtitle() {
   setTextIfChanged(elements.inspectorSubtitle, settingsInspectorSubtitleText());
 }
 
+function displayedSettingsCategory() {
+  return settingsSearchExactCategoryId(state.settingsQuery) || state.settingsCategory;
+}
+
 function renderSettingsChrome(host) {
   const reactSettings = window.CmuxSettingsUi;
   const focusSearchOnMount = state.settingsSearchFocusPending;
@@ -17326,7 +17330,7 @@ function renderSettingsChrome(host) {
     return;
   }
   reactSettings.renderSettingsShell(host, {
-    activeCategory: state.settingsCategory,
+    activeCategory: displayedSettingsCategory(),
     categories: settingsCategories,
     focusSearchOnMount,
     query: state.settingsQuery,
@@ -17471,7 +17475,8 @@ function settingsCategoryNav() {
     option.textContent = label;
     select.append(option);
   }
-  select.value = state.settingsCategory;
+  const activeCategory = displayedSettingsCategory();
+  select.value = activeCategory;
   select.onchange = () => {
     state.settingsCategory = select.value;
     state.settingsQuery = "";
@@ -17485,7 +17490,7 @@ function settingsCategoryNav() {
   tabs.setAttribute("aria-label", t("settings.pagesAriaLabel"));
   for (const [id, label] of settingsCategories) {
     const button = document.createElement("button");
-    const active = id === state.settingsCategory;
+    const active = id === activeCategory;
     button.className = `settings-page-tab${active ? " is-active" : ""}`;
     button.type = "button";
     button.title = formatMessage("settings.tabTitle", { label });

@@ -705,6 +705,18 @@ button {
 
 .shell.performance-mode {
   --pane-spacing: 0px;
+  --background-blur: 0px !important;
+  --background-scale: 1 !important;
+  --pane-background-blur: 0px !important;
+  --pane-background-scale: 1 !important;
+  --active-pane-background-blur: 0px !important;
+  --active-pane-background-scale: 1 !important;
+  --active-background-blur: 0px !important;
+  --active-background-scale: 1 !important;
+  --snapshot-background-blur: 0px !important;
+  --snapshot-background-scale: 1 !important;
+  --preview-background-blur: 0px !important;
+  --preview-background-scale: 1 !important;
   --shadow-soft: none;
   --depth-pane-shadow: none;
   --depth-topbar-shadow: none;
@@ -726,6 +738,14 @@ button {
 .shell.performance-mode.has-background .browser-tabs,
 .shell.performance-mode.has-background .browser-bar {
   background: var(--color-pane-warm-surface);
+}
+
+.shell.performance-mode .appearance-preview-backdrop,
+.shell.performance-mode .active-pane-background-chip-preview::before,
+.shell.performance-mode .active-background-preview::before,
+.shell.performance-mode .active-background-snapshot-preview::before {
+  filter: none !important;
+  transform: none !important;
 }
 
 body.reduce-motion *,
