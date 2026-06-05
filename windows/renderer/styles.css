@@ -17588,6 +17588,130 @@ textarea.dialog-input {
   background: var(--settings-surface-hover);
 }
 
+.workspace-name-control {
+  padding: var(--space-1);
+  border: 1px solid var(--settings-border);
+  border-radius: var(--radius-1);
+  background: color-mix(in oklch, var(--color-rail) 38%, transparent);
+}
+
+.workspace-name-control .setting-control,
+.workspace-name-control .settings-action {
+  height: 34px;
+}
+
+.workspace-name-control .settings-action {
+  min-width: 0;
+  padding-inline: 7px;
+}
+
+.workspace-name-control .settings-action.primary {
+  min-width: 72px;
+}
+
+.workspace-naming-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(126px, 100%), 1fr));
+}
+
+.workspace-naming-grid span,
+.workspace-preview-meta span {
+  border-color: var(--settings-border);
+  background: color-mix(in oklch, var(--color-pane) 54%, transparent);
+}
+
+.active-background-panel {
+  grid-template-columns: minmax(132px, .36fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border-color: var(--settings-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--settings-surface-raised) 94%, var(--color-text) 2%),
+    color-mix(in oklch, var(--color-pane) 72%, transparent)
+  );
+}
+
+.active-background-preview {
+  border-color: var(--settings-border-strong);
+}
+
+.active-background-copy {
+  align-content: start;
+  padding-top: 2px;
+}
+
+.active-background-title {
+  font-size: 14px;
+}
+
+.active-background-source {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.active-background-snapshot {
+  grid-template-columns: repeat(auto-fit, minmax(min(112px, 100%), 1fr));
+}
+
+.active-background-snapshot-item,
+.background-target-option {
+  border-color: var(--settings-border);
+  background: var(--settings-control-surface);
+}
+
+.active-background-snapshot-item:hover:not(:disabled),
+.background-target-option:hover:not(:disabled) {
+  border-color: var(--settings-border-strong);
+  background: var(--settings-surface-hover);
+}
+
+.background-image-target-control,
+.active-background-input-row {
+  border-color: var(--settings-border);
+  background: color-mix(in oklch, var(--color-rail) 40%, transparent);
+}
+
+.background-image-target-control .background-target-options {
+  grid-template-columns: repeat(auto-fit, minmax(min(136px, 100%), 1fr));
+}
+
+.active-background-input-row {
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+}
+
+.background-action-group {
+  grid-template-columns: repeat(auto-fit, minmax(min(92px, 100%), 1fr));
+}
+
+.background-action-title {
+  color: color-mix(in oklch, var(--color-muted) 82%, var(--color-text) 18%);
+}
+
+@container (max-width: 680px) {
+  .workspace-name-control,
+  .workspace-name-control.has-page-title,
+  .workspace-name-control.has-branch-title {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-name-control .setting-control {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 520px) {
+  .active-background-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .active-background-preview {
+    min-height: 120px;
+  }
+}
+
 @media (max-width: 980px) {
   .shell,
   .shell.inspector-open {
