@@ -83,6 +83,10 @@
   scrollbar-width: thin;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 *::-webkit-scrollbar {
   width: var(--scrollbar-size);
   height: var(--scrollbar-size);

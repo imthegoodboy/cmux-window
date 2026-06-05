@@ -16267,7 +16267,7 @@ function renderSettingsInspector(options = {}) {
     return;
   }
   elements.inspectorTitle.textContent = "Settings";
-  elements.inspectorSubtitle.textContent = `${settingsCategoryLabel(state.settingsCategory)} page`;
+  refreshSettingsInspectorSubtitle();
   const resetScroll = Boolean(options.resetScroll || state.settingsScrollResetPending);
   state.settingsScrollResetPending = false;
   const signature = settingsInspectorSignature();
@@ -17298,7 +17298,21 @@ function clearSettingsSearch(options = {}) {
   state.settingsQuery = "";
   state.settingsSearchResultText = "";
   state.settingsSearchFocusPending = options.focusSearch !== false;
+  refreshSettingsInspectorSubtitle();
   scheduleSettingsInspectorRender({ resetScroll: true });
+}
+
+function settingsInspectorSubtitleText() {
+  const query = String(state.settingsQuery || "").trim();
+  if (normalizeSettingsQuery(query)) {
+    const label = query.length > 36 ? `${query.slice(0, 36)}...` : query;
+    return `Search: ${label}`;
+  }
+  return `${settingsCategoryLabel(state.settingsCategory)} page`;
+}
+
+function refreshSettingsInspectorSubtitle() {
+  setTextIfChanged(elements.inspectorSubtitle, settingsInspectorSubtitleText());
 }
 
 function renderSettingsChrome(host) {
@@ -17332,6 +17346,7 @@ function renderSettingsChrome(host) {
       state.settingsCategory = category;
       state.settingsQuery = "";
       state.settingsSearchResultText = "";
+      refreshSettingsInspectorSubtitle();
       renderSettingsInspector({ resetScroll: true });
     },
     onQuery: (query) => {
@@ -17339,6 +17354,7 @@ function renderSettingsChrome(host) {
       state.settingsQuery = query;
       const isSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
       state.settingsSearchResultText = isSearching ? t("settings.searching") : "";
+      refreshSettingsInspectorSubtitle();
       if (!wasSearching && isSearching) queueSettingsSearchAutoScroll();
       if (wasSearching !== isSearching) {
         state.settingsSearchFocusPending = true;
@@ -17373,6 +17389,7 @@ function settingsSearch() {
     clear.disabled = !state.settingsQuery;
     const isSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
     state.settingsSearchResultText = isSearching ? t("settings.searching") : "";
+    refreshSettingsInspectorSubtitle();
     setSettingsSearchResultText(state.settingsSearchResultText);
     if (!wasSearching && isSearching) queueSettingsSearchAutoScroll();
     if (wasSearching !== isSearching) {
@@ -24143,9 +24160,10 @@ function settingsSectionTitle(section) {
   return normalizeSettingsQuery(section?.querySelector(".settings-section-title")?.textContent);
 }
 
-function settingsSearchTargetScore(item, sectionTitle = "") {
+function settingsSearchTargetScore(item, sectionTitle = "", tokens = []) {
   if (!item) return -Infinity;
   let score = 10;
+  if (tokens.length && settingsSearchMatchesNormalized(sectionTitle, tokens)) score += 180;
   if (item.classList.contains("setting-row")) score += 90;
   if (item.classList.contains("settings-command-card")) score += 85;
   if (item.classList.contains("settings-actions")) score += 74;
@@ -24164,8 +24182,8 @@ function settingsSearchTargetScore(item, sectionTitle = "") {
   return score;
 }
 
-function maybeUpdateSettingsSearchTarget(current, item, sectionTitle) {
-  const score = settingsSearchTargetScore(item, sectionTitle);
+function maybeUpdateSettingsSearchTarget(current, item, sectionTitle, tokens = []) {
+  const score = settingsSearchTargetScore(item, sectionTitle, tokens);
   if (!current || score > current.score) return { item, score };
   return current;
 }
@@ -24183,11 +24201,14 @@ function settingsSearchStickyOffset() {
 
 function scrollSettingsSearchTargetIntoView(target) {
   if (!target || !elements.inspectorBody.contains(target)) return;
-  const bodyRect = elements.inspectorBody.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const top = elements.inspectorBody.scrollTop + targetRect.top - bodyRect.top - settingsSearchStickyOffset();
-  const behavior = state.settings.reduceMotion || state.settings.performanceMode ? "auto" : "smooth";
-  elements.inspectorBody.scrollTo({ top: Math.max(0, Math.round(top)), behavior });
+  requestAnimationFrame(() => {
+    if (!target || !elements.inspectorBody.contains(target) || target.hidden || target.closest("[hidden]")) return;
+    const bodyRect = elements.inspectorBody.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const top = elements.inspectorBody.scrollTop + targetRect.top - bodyRect.top - settingsSearchStickyOffset();
+    const behavior = state.settings.reduceMotion || state.settings.performanceMode ? "auto" : "smooth";
+    elements.inspectorBody.scrollTo({ top: Math.max(0, Math.round(top)), behavior });
+  });
 }
 
 function setSettingsSearchBusy(busy) {
@@ -24369,7 +24390,7 @@ function processSettingsFilterSection(job, sectionRecord) {
   let sectionVisible = sectionMatches;
   if (sectionMatches) {
     job.matchingItems += 1;
-    job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, section, sectionTitle);
+    job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, section, sectionTitle, job.tokens);
   }
   for (const { item, search } of items) {
     const itemMatches = settingsSearchMatchesNormalized(search, job.tokens);
@@ -24379,7 +24400,7 @@ function processSettingsFilterSection(job, sectionRecord) {
     if (itemMatches) {
       openSettingsSearchAncestorDisclosure(item);
       job.matchingItems += 1;
-      job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, item, sectionTitle);
+      job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, item, sectionTitle, job.tokens);
     }
   }
   for (const { group, search, cards } of groups) {
@@ -24391,7 +24412,7 @@ function processSettingsFilterSection(job, sectionRecord) {
     if (groupMatches) {
       openSettingsSearchAncestorDisclosure(group);
       job.matchingItems += 1;
-      job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, group, sectionTitle);
+      job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, group, sectionTitle, job.tokens);
     }
   }
   setHiddenIfChanged(section, !sectionVisible);
