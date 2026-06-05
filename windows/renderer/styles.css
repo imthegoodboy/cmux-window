@@ -6836,7 +6836,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 
 .settings-react-host {
   position: sticky;
-  top: var(--space-4);
+  top: calc(var(--space-4) * -1);
   z-index: 4;
   min-width: 0;
   max-width: 100%;
