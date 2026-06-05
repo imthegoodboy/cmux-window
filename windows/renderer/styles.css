@@ -11328,6 +11328,10 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   padding: 0 var(--space-1) var(--space-1);
 }
 
+.quick-overview-tools:not([open]) .quick-overview-tools-body {
+  display: none;
+}
+
 .quick-overview-controls,
 .quick-overview-speed,
 .quick-overview-scope,
