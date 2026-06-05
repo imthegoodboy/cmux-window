@@ -24170,11 +24170,22 @@ function maybeUpdateSettingsSearchTarget(current, item, sectionTitle) {
   return current;
 }
 
+function settingsSearchStickyOffset() {
+  const body = elements.inspectorBody;
+  const chrome = body?.querySelector(".settings-react-shell");
+  if (!body || !chrome) return 12;
+  const bodyRect = body.getBoundingClientRect();
+  const chromeRect = chrome.getBoundingClientRect();
+  const visibleChromeHeight = Math.max(0, Math.min(chromeRect.bottom, bodyRect.bottom) - bodyRect.top);
+  const maxUsefulOffset = Math.max(12, bodyRect.height - 96);
+  return Math.min(Math.max(12, visibleChromeHeight + 12), maxUsefulOffset);
+}
+
 function scrollSettingsSearchTargetIntoView(target) {
   if (!target || !elements.inspectorBody.contains(target)) return;
   const bodyRect = elements.inspectorBody.getBoundingClientRect();
   const targetRect = target.getBoundingClientRect();
-  const top = elements.inspectorBody.scrollTop + targetRect.top - bodyRect.top - 12;
+  const top = elements.inspectorBody.scrollTop + targetRect.top - bodyRect.top - settingsSearchStickyOffset();
   const behavior = state.settings.reduceMotion || state.settings.performanceMode ? "auto" : "smooth";
   elements.inspectorBody.scrollTo({ top: Math.max(0, Math.round(top)), behavior });
 }
