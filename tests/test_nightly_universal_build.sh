@@ -1,56 +1,61 @@
 #!/usr/bin/env bash
-# Regression test for dual nightly macOS tracks.
+# Regression test for the unified universal nightly macOS track.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKFLOW_FILE="$ROOT_DIR/.github/workflows/nightly.yml"
 
+if ! grep -Fq "cancel-in-progress: \${{ github.event_name == 'push' }}" "$WORKFLOW_FILE"; then
+  echo "FAIL: nightly workflow must cancel stale push runs while leaving manual runs queued"
+  exit 1
+fi
+
 if ! awk '
-  /^      - name: Build Apple Silicon app \(Release\)/ { in_arm=1; next }
-  /^      - name: Build universal app \(Release\)/ { in_universal=1; next }
-  in_arm && /^      - name:/ { in_arm=0 }
+  /^      - name: Build universal nightly app \(Release\)/ { in_universal=1; next }
   in_universal && /^      - name:/ { in_universal=0 }
-  in_arm && /-destination '\''platform=macOS,arch=arm64'\''/ { saw_arm_destination=1 }
-  in_arm && /ARCHS="arm64"/ { saw_arm_archs=1 }
-  in_arm && /ONLY_ACTIVE_ARCH=YES/ { saw_arm_only_active_arch=1 }
   in_universal && /-destination '\''generic\/platform=macOS'\''/ { saw_universal_destination=1 }
   in_universal && /ARCHS="arm64 x86_64"/ { saw_universal_archs=1 }
   in_universal && /ONLY_ACTIVE_ARCH=NO/ { saw_universal_only_active_arch=1 }
   END {
-    exit !(saw_arm_destination && saw_arm_archs && saw_arm_only_active_arch && saw_universal_destination && saw_universal_archs && saw_universal_only_active_arch)
+    exit !(saw_universal_destination && saw_universal_archs && saw_universal_only_active_arch)
   }
 ' "$WORKFLOW_FILE"; then
-  echo "FAIL: nightly workflow must force Apple Silicon nightly to arm64-only and universal nightly to both slices"
+  echo "FAIL: nightly workflow must build the unified nightly app as a universal binary"
   exit 1
 fi
 
 if ! awk '
   /^      - name: Verify nightly binary architectures/ { in_verify=1; next }
   in_verify && /^      - name:/ { in_verify=0 }
-  in_verify && /lipo -archs "\$ARM_APP_BINARY"/ { saw_arm_app=1 }
-  in_verify && /lipo -archs "\$ARM_CLI_BINARY"/ { saw_arm_cli=1 }
   in_verify && /lipo -archs "\$APP_BINARY"/ { saw_app=1 }
   in_verify && /lipo -archs "\$CLI_BINARY"/ { saw_cli=1 }
-  in_verify && /\[\[ "\$ARM_APP_ARCHS" == "arm64" \]\]/ { saw_arm_app_assert=1 }
-  in_verify && /\[\[ "\$ARM_CLI_ARCHS" == "arm64" \]\]/ { saw_arm_cli_assert=1 }
-  END { exit !(saw_arm_app && saw_arm_cli && saw_app && saw_cli && saw_arm_app_assert && saw_arm_cli_assert) }
+  in_verify && /lipo -archs "\$HELPER_BINARY"/ { saw_helper=1 }
+  in_verify && /\[\[ "\$APP_ARCHS" == \*arm64\* && "\$APP_ARCHS" == \*x86_64\* \]\]/ { saw_app_assert=1 }
+  in_verify && /\[\[ "\$CLI_ARCHS" == \*arm64\* && "\$CLI_ARCHS" == \*x86_64\* \]\]/ { saw_cli_assert=1 }
+  in_verify && /\[\[ "\$HELPER_ARCHS" == \*arm64\* && "\$HELPER_ARCHS" == \*x86_64\* \]\]/ { saw_helper_assert=1 }
+  END { exit !(saw_app && saw_cli && saw_helper && saw_app_assert && saw_cli_assert && saw_helper_assert) }
 ' "$WORKFLOW_FILE"; then
-  echo "FAIL: nightly workflow must verify arm-only and universal slices with lipo"
+  echo "FAIL: nightly workflow must verify universal app, CLI, and helper slices with lipo"
   exit 1
 fi
 
-if ! grep -Fq 'com.cmuxterm.app.nightly.universal' "$WORKFLOW_FILE"; then
-  echo "FAIL: nightly workflow must set a distinct .universal bundle ID"
+if ! grep -Fq 'com.cmuxterm.app.nightly' "$WORKFLOW_FILE"; then
+  echo "FAIL: nightly workflow must set the unified nightly bundle ID"
   exit 1
 fi
 
-if ! grep -Fq 'https://github.com/manaflow-ai/cmux/releases/download/nightly/appcast-universal.xml' "$WORKFLOW_FILE"; then
-  echo "FAIL: nightly workflow must publish a separate universal appcast feed"
+if ! grep -Fq 'https://files.cmux.com/nightly/appcast.xml' "$WORKFLOW_FILE"; then
+  echo "FAIL: nightly workflow must point the unified nightly app at the R2 appcast"
   exit 1
 fi
 
-if ! grep -Fq './scripts/sparkle_generate_appcast.sh "$NIGHTLY_UNIVERSAL_DMG_IMMUTABLE" nightly appcast-universal.xml' "$WORKFLOW_FILE"; then
-  echo "FAIL: nightly workflow must generate a separate universal appcast"
+if ! grep -Fq './scripts/sparkle_generate_appcast.sh "$NIGHTLY_DMG_IMMUTABLE" nightly appcast.xml' "$WORKFLOW_FILE"; then
+  echo "FAIL: nightly workflow must generate the unified nightly appcast"
+  exit 1
+fi
+
+if ! grep -Fq 'cp appcast.xml appcast-universal.xml' "$WORKFLOW_FILE"; then
+  echo "FAIL: nightly workflow must keep the legacy universal appcast alias"
   exit 1
 fi
 
@@ -63,13 +68,13 @@ if ! awk '
   /^      - name: Upload branch nightly artifacts/ { in_upload=1; next }
   in_upload && /^      - name:/ { in_upload=0 }
   in_upload && /if: needs\.decide\.outputs\.should_publish != '\''true'\''/ { saw_if=1 }
-  in_upload && /uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4/ { saw_upload=1 }
-  in_upload && /cmux-nightly-macos\*\.dmg/ { saw_arm_artifacts=1 }
-  in_upload && /cmux-nightly-universal-macos\*\.dmg/ { saw_universal_artifacts=1 }
+  in_upload && /uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7/ { saw_upload=1 }
+  in_upload && /cmux-nightly-macos\*\.dmg/ { saw_artifacts=1 }
+  in_upload && /appcast\.xml/ { saw_appcast=1 }
   in_upload && /appcast-universal\.xml/ { saw_universal_appcast=1 }
-  END { exit !(saw_if && saw_upload && saw_arm_artifacts && saw_universal_artifacts && saw_universal_appcast) }
+  END { exit !(saw_if && saw_upload && saw_artifacts && saw_appcast && saw_universal_appcast) }
 ' "$WORKFLOW_FILE"; then
-  echo "FAIL: non-main nightly runs must upload both nightly variants and both appcasts"
+  echo "FAIL: non-main nightly runs must upload the unified nightly artifacts and appcasts"
   exit 1
 fi
 
@@ -87,13 +92,14 @@ if ! awk '
   /^      - name: Publish nightly release assets/ { in_publish=1; next }
   in_publish && /^      - name:/ { in_publish=0 }
   in_publish && /if: needs\.decide\.outputs\.should_publish == '\''true'\''/ { saw_publish_if=1 }
-  in_publish && /cmux-nightly-universal-macos-\$\{\{ github\.run_id \}\}\*\.dmg/ { saw_universal_immutable=1 }
-  in_publish && /cmux-nightly-universal-macos\.dmg/ { saw_universal_stable=1 }
+  in_publish && /cmux-nightly-macos-\$\{\{ github\.run_id \}\}\*\.dmg/ { saw_immutable=1 }
+  in_publish && /cmux-nightly-macos\.dmg/ { saw_stable=1 }
+  in_publish && /appcast\.xml/ { saw_appcast=1 }
   in_publish && /appcast-universal\.xml/ { saw_universal_appcast=1 }
-  END { exit !(saw_publish_if && saw_universal_immutable && saw_universal_stable && saw_universal_appcast) }
+  END { exit !(saw_publish_if && saw_immutable && saw_stable && saw_appcast && saw_universal_appcast) }
 ' "$WORKFLOW_FILE"; then
-  echo "FAIL: main nightly publish must include the universal assets and appcast"
+  echo "FAIL: main nightly publish must include the unified nightly assets and appcasts"
   exit 1
 fi
 
-echo "PASS: nightly workflow keeps separate Apple Silicon and universal nightly tracks"
+echo "PASS: nightly workflow keeps the unified universal nightly track"

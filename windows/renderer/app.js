@@ -16296,7 +16296,7 @@ function renderSettingsInspector(options = {}) {
   };
 
   if (shouldBuildSection("quick")) {
-    const quickSection = settingsSection("Quick setup");
+    const quickSection = settingsSection("Quick setup", "", "quick");
     quickSection.append(quickSetupOverviewPanel(getStorageEntriesForRender()));
     quickSection.append(quickSetupMapPanel());
     quickSection.append(quickSetupPresetRailPanel());
@@ -16310,19 +16310,19 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("profiles")) {
-    const profilesSection = settingsSection("Profiles", "saved settings profile preset apply save rename delete appearance layout terminal performance");
+    const profilesSection = settingsSection("Profiles", "saved settings profile preset apply save rename delete appearance layout terminal performance", "profiles");
     profilesSection.append(settingsProfilesDisclosurePanel());
     nodes.push(profilesSection);
   }
 
   if (shouldBuildSection("blueprints")) {
-    const blueprintsSection = settingsSection("Workspace blueprints", "saved workspace blueprint layout pane template terminal browser split apply new save copy paste rename delete clipboard json");
+    const blueprintsSection = settingsSection("Workspace blueprints", "saved workspace blueprint layout pane template terminal browser split apply new save copy paste rename delete clipboard json", "blueprints");
     blueprintsSection.append(workspaceBlueprintsDisclosurePanel());
     nodes.push(blueprintsSection);
   }
 
   if (shouldBuildSection("workspace")) {
-    const workspaceSection = settingsSection("Workspace");
+    const workspaceSection = settingsSection("Workspace", "", "workspace");
     workspaceSection.append(workspaceSettingsPreviewPanel(workspace));
     workspaceSection.append(workspaceNamingPanel(workspace));
     workspaceSection.append(workspaceActivePaneSettingRow(workspace));
@@ -16354,7 +16354,7 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("appearance")) {
-    const appearanceSection = settingsSection("Appearance");
+    const appearanceSection = settingsSection("Appearance", "", "appearance");
     appearanceSection.append(appearancePreviewPanel());
     appearanceSection.append(lookPackGrid());
     const themeSelect = document.createElement("select");
@@ -16458,7 +16458,7 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("browser")) {
-    const browserSection = settingsSection("Browser");
+    const browserSection = settingsSection("Browser", "", "browser");
     browserSection.append(browserSettingsPreviewPanel());
     const homeInput = document.createElement("input");
     homeInput.className = "setting-control";
@@ -16591,7 +16591,7 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("layout")) {
-    const layoutSection = settingsSection("Layout");
+    const layoutSection = settingsSection("Layout", "", "layout");
     layoutSection.append(layoutSettingsPreviewPanel());
     layoutSection.append(workspaceChromePresetGrid());
     layoutSection.append(settingRow(
@@ -16654,7 +16654,7 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("performance")) {
-    const performanceSection = settingsSection("Performance", "speed smooth lag render diagnostics optimize preset");
+    const performanceSection = settingsSection("Performance", "speed smooth lag render diagnostics optimize preset", "performance");
     performanceSection.append(performanceOverviewPanel());
     performanceSection.append(performanceHealthChecklist());
     const performanceMetricGrid = settingsMetricGrid(performanceMetrics());
@@ -16747,7 +16747,7 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("actions")) {
-    const actionsSection = settingsSection("Actions", "commands shortcuts keyboard palette run tools");
+    const actionsSection = settingsSection("Actions", "commands shortcuts keyboard palette run tools", "actions");
     actionsSection.append(settingsActionsOverviewPanel());
     actionsSection.append(actionWorkflowGrid());
     actionsSection.append(settingsCommandGroupShortcutGrid());
@@ -16756,13 +16756,13 @@ function renderSettingsInspector(options = {}) {
   }
 
   if (shouldBuildSection("commands")) {
-    const snippetsSection = settingsSection("Command snippets", "terminal command snippets saved custom git github gh cli run add copy paste edit delete palette clipboard json");
+    const snippetsSection = settingsSection("Command snippets", "terminal command snippets saved custom git github gh cli run add copy paste edit delete palette clipboard json", "commands");
     snippetsSection.append(commandSnippetsDisclosurePanel());
     nodes.push(snippetsSection);
   }
 
   if (shouldBuildSection("terminal")) {
-    const terminalSection = settingsSection("Terminal");
+    const terminalSection = settingsSection("Terminal", "", "terminal");
     terminalSection.append(terminalSettingsPreviewPanel());
     terminalSection.append(terminalReadabilityPresetGrid());
     const fontSelect = document.createElement("select");
@@ -16972,7 +16972,7 @@ function renderSettingsInspector(options = {}) {
 
   if (shouldBuildSection("data")) {
     const storageEntries = getStorageEntriesForRender();
-    const actionsSection = settingsSection("Settings data");
+    const actionsSection = settingsSection("Settings data", "", "data");
     actionsSection.append(dataSettingsOverviewPanel(storageEntries));
     const dataMetrics = settingsMetricGrid(settingsDataMetrics(storageEntries), "data storage local settings metric");
     dataMetrics.classList.add("data-metric-grid");
@@ -24015,10 +24015,11 @@ function activePaneSettingsPanel(workspace = activeWorkspace()) {
   return wrapper;
 }
 
-function settingsSection(title, searchTerms = "") {
+function settingsSection(title, searchTerms = "", categoryId = "") {
   const section = document.createElement("section");
   section.className = "settings-section";
   section.dataset.settingsSearch = normalizeSettingsQuery(`${title} ${searchTerms}`);
+  if (categoryId) section.dataset.settingsCategorySection = categoryId;
   const heading = document.createElement("div");
   heading.className = "settings-section-title";
   heading.textContent = title;
@@ -24157,7 +24158,8 @@ function setSettingsSearchIfChanged(target, search) {
 }
 
 function settingsSectionTitle(section) {
-  return normalizeSettingsQuery(section?.querySelector(".settings-section-title")?.textContent);
+  const heading = [...(section?.children || [])].find((child) => child.classList?.contains("settings-section-title"));
+  return normalizeSettingsQuery(heading?.textContent);
 }
 
 function settingsSearchTargetScore(item, sectionTitle = "", tokens = []) {
@@ -24190,6 +24192,23 @@ function maybeUpdateSettingsSearchTarget(current, item, sectionTitle, tokens = [
   return current;
 }
 
+function settingsSearchExactCategoryId(query) {
+  const normalized = normalizeSettingsQuery(query);
+  if (!normalized) return "";
+  const found = settingsCategories.find(([id, label]) => (
+    normalized === normalizeSettingsQuery(id)
+    || normalized === normalizeSettingsQuery(label)
+  ));
+  return found?.[0] || "";
+}
+
+function settingsSearchExactCategoryTarget(query) {
+  const categoryId = settingsSearchExactCategoryId(query);
+  if (!categoryId || !elements.inspectorBody) return null;
+  return [...elements.inspectorBody.querySelectorAll(".settings-section")]
+    .find((section) => section.dataset.settingsCategorySection === categoryId) || null;
+}
+
 function settingsSearchStickyOffset() {
   const body = elements.inspectorBody;
   const chrome = body?.querySelector(".settings-react-shell");
@@ -24203,13 +24222,19 @@ function settingsSearchStickyOffset() {
 
 function scrollSettingsSearchTargetIntoView(target) {
   if (!target || !elements.inspectorBody.contains(target)) return;
-  requestAnimationFrame(() => {
+  const scrollToTarget = (behavior) => {
     if (!target || !elements.inspectorBody.contains(target) || target.hidden || target.closest("[hidden]")) return;
     const bodyRect = elements.inspectorBody.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
     const top = elements.inspectorBody.scrollTop + targetRect.top - bodyRect.top - settingsSearchStickyOffset();
-    const behavior = state.settings.reduceMotion || state.settings.performanceMode ? "auto" : "smooth";
     elements.inspectorBody.scrollTo({ top: Math.max(0, Math.round(top)), behavior });
+  };
+  requestAnimationFrame(() => {
+    if (!target || !elements.inspectorBody.contains(target) || target.hidden || target.closest("[hidden]")) return;
+    const behavior = state.settings.reduceMotion || state.settings.performanceMode ? "auto" : "smooth";
+    scrollToTarget(behavior);
+    requestAnimationFrame(() => scrollToTarget("auto"));
+    window.setTimeout(() => scrollToTarget("auto"), 180);
   });
 }
 
@@ -24426,7 +24451,9 @@ function finishSettingsFilterJob(job) {
   syncSettingsSearchFilterControls(job.query, job.visibleSections);
   setSettingsSearchResultText(settingsSearchResultMessage(job.matchingItems, job.visibleSections));
   if (state.settingsSearchAutoScrollQuery === job.query) state.settingsSearchAutoScrollQuery = "";
-  if (job.shouldAutoScroll && job.visibleSections > 0) scrollSettingsSearchTargetIntoView(job.bestTarget?.item);
+  if (job.shouldAutoScroll && job.visibleSections > 0) {
+    scrollSettingsSearchTargetIntoView(settingsSearchExactCategoryTarget(job.query) || job.bestTarget?.item);
+  }
   setSettingsSearchBusy(false);
   setSettingsSearchLayoutNeeded(false);
   state.settingsSearchLastFilterSignature = job.filterSignature;
@@ -24536,7 +24563,9 @@ function applySettingsFilter() {
   setSettingsSearchResultText(settingsSearchResultMessage(job.matchingItems, job.visibleSections));
   const shouldAutoScroll = mayAutoScroll;
   if (!searchStillMounting && state.settingsSearchAutoScrollQuery === query) state.settingsSearchAutoScrollQuery = "";
-  if (shouldAutoScroll && job.visibleSections > 0) scrollSettingsSearchTargetIntoView(job.bestTarget?.item);
+  if (shouldAutoScroll && job.visibleSections > 0) {
+    scrollSettingsSearchTargetIntoView(settingsSearchExactCategoryTarget(query) || job.bestTarget?.item);
+  }
   if (!searchStillMounting) setSettingsSearchBusy(false);
   if (!searchStillMounting) setSettingsSearchLayoutNeeded(false);
   state.settingsSearchLastFilterSignature = filterSignature;

@@ -124,13 +124,22 @@ check_release_build_signal() {
   echo "PASS: release-build keeps universal artifact verification"
 }
 
+check_ci_push_cancels_stale_runs() {
+  if ! grep -Fq "cancel-in-progress: \${{ github.event_name == 'pull_request' || github.event_name == 'push' }}" "$CI_FILE"; then
+    echo "FAIL: ci.yml must cancel stale push runs so old queued macOS jobs cannot block latest main CI"
+    exit 1
+  fi
+
+  echo "PASS: CI cancels stale push runs"
+}
+
 check_windows_scope_gate() {
   if ! grep -Fq "ci-scope:" "$CI_FILE"; then
     echo "FAIL: ci.yml must classify PR scope before scheduling paid macOS jobs"
     exit 1
   fi
 
-  if ! grep -Fq "windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|tests/test_ci_self_hosted_guard.sh)" "$CI_FILE"; then
+  if ! grep -Fq "windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|.github/workflows/nightly.yml|tests/test_ci_self_hosted_guard.sh|tests/test_nightly_universal_build.sh)" "$CI_FILE"; then
     echo "FAIL: ci.yml must treat Windows-only PRs as not requiring macOS runners"
     exit 1
   fi
@@ -177,7 +186,7 @@ check_activation_scope_gate() {
     exit 1
   fi
 
-  if ! grep -Fq "windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|tests/test_ci_self_hosted_guard.sh)" "$PERF_FILE"; then
+  if ! grep -Fq "windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|.github/workflows/nightly.yml|tests/test_ci_self_hosted_guard.sh|tests/test_nightly_universal_build.sh)" "$PERF_FILE"; then
     echo "FAIL: perf-activation.yml must treat Windows-only PRs as not requiring activation performance runners"
     exit 1
   fi
@@ -206,6 +215,7 @@ check_macos_runner "$CI_FILE" "tests"
 check_macos_runner "$CI_FILE" "tests-build-and-lag"
 check_macos_runner "$CI_FILE" "release-build"
 check_macos_runner "$CI_FILE" "ui-regressions"
+check_ci_push_cancels_stale_runs
 check_windows_scope_gate
 check_macos_runner "$PERF_FILE" "activation-session"
 check_activation_scope_gate

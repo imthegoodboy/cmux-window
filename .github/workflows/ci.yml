@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   ci-scope:
@@ -54,7 +54,7 @@ jobs:
           while IFS= read -r path; do
             [ -n "$path" ] || continue
             case "$path" in
-              windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|tests/test_ci_self_hosted_guard.sh)
+              windows/*|README.md|.gitignore|.gitattributes|.github/workflows/windows-app.yml|.github/workflows/windows-release.yml|.github/workflows/ci.yml|.github/workflows/perf-activation.yml|.github/workflows/nightly.yml|tests/test_ci_self_hosted_guard.sh|tests/test_nightly_universal_build.sh)
                 ;;
               *)
                 requires_macos=true
@@ -90,6 +90,9 @@ jobs:
 
       - name: Validate nightly tag push auth
         run: ./tests/test_ci_nightly_tag_push_auth.sh
+
+      - name: Validate nightly universal build workflow
+        run: bash ./tests/test_nightly_universal_build.sh
 
       - name: Validate release asset guard
         run: node scripts/release_asset_guard.test.js
