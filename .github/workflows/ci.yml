@@ -27,15 +27,29 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "requires_macos=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          base_sha=""
+          case "$EVENT_NAME" in
+            pull_request)
+              base_sha="$BASE_SHA"
+              ;;
+            push)
+              base_sha="$PUSH_BEFORE_SHA"
+              if [ -z "$base_sha" ] || [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+                echo "requires_macos=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              ;;
+            *)
+              echo "requires_macos=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
 
-          changed_files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          changed_files="$(git diff --name-only "$base_sha" "$HEAD_SHA")"
           requires_macos=false
           while IFS= read -r path; do
             [ -n "$path" ] || continue
