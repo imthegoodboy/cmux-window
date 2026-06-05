@@ -17619,6 +17619,48 @@ textarea.dialog-input {
   background: color-mix(in oklch, var(--color-pane) 54%, transparent);
 }
 
+.workspace-settings-preview {
+  gap: var(--space-1);
+  padding: 10px;
+  border-color: var(--settings-border);
+  background: var(--settings-surface);
+}
+
+.workspace-preview-frame {
+  grid-template-rows: 42px 26px;
+  min-height: 68px;
+  border-color: var(--settings-border);
+  background: color-mix(in oklch, var(--color-canvas) 80%, var(--color-pane) 20%);
+}
+
+.workspace-preview-row {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 6px 10px;
+  border-bottom: 0;
+}
+
+.workspace-preview-topbar,
+.workspace-preview-pane {
+  display: none;
+}
+
+.workspace-preview-tabs {
+  grid-template-columns: minmax(0, 1fr) minmax(74px, .42fr) 24px;
+  align-items: end;
+  padding: 0 10px 6px;
+  border-bottom: 0;
+  background: color-mix(in oklch, var(--workspace-preview-color) 8%, var(--color-canvas) 92%);
+}
+
+.workspace-preview-tab {
+  height: 20px;
+  padding-top: 4px;
+}
+
+.workspace-preview-meta {
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
+}
+
 .active-background-panel {
   grid-template-columns: minmax(132px, .36fr) minmax(0, 1fr);
   gap: 10px;
