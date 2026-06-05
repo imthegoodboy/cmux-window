@@ -1266,6 +1266,7 @@ const state = {
   settingsSearchFocusPending: false,
   settingsSearchLastFilterSignature: "",
   settingsSearchDisclosuresOpenVersion: 0,
+  settingsSearchDisclosuresOpenQuery: "",
   renderStats: {
     count: 0,
     lastMs: 0,
@@ -24094,6 +24095,7 @@ function rebuildSettingsSearchIndex() {
   state.settingsSearchIndexVersion += 1;
   state.settingsSearchLastFilterSignature = "";
   state.settingsSearchDisclosuresOpenVersion = 0;
+  state.settingsSearchDisclosuresOpenQuery = "";
   state.settingsSearchEmpty = elements.inspectorBody.querySelector(".settings-empty");
   return state.settingsSearchIndex;
 }
@@ -24181,36 +24183,91 @@ function setSettingsSearchLayoutNeeded(needed) {
   }
 }
 
+function settingsDisclosureSearchText(disclosure) {
+  if (!disclosure) return "";
+  return normalizeSettingsQuery([
+    disclosure.dataset.settingsSearch || "",
+    disclosure.querySelector(".settings-disclosure-summary")?.textContent || "",
+    disclosure.querySelector("summary")?.textContent || ""
+  ].join(" "));
+}
+
+function settingsDisclosureSectionSearchText(disclosure) {
+  const section = disclosure?.closest?.(".settings-section");
+  if (!section) return "";
+  return normalizeSettingsQuery([
+    section.dataset.settingsSearch || "",
+    settingsSectionTitle(section)
+  ].join(" "));
+}
+
+function settingsDisclosureMatchesSearch(disclosure, tokens) {
+  if (!tokens.length) return false;
+  return settingsSearchMatchesNormalized(settingsDisclosureSearchText(disclosure), tokens)
+    || settingsSearchMatchesNormalized(settingsDisclosureSectionSearchText(disclosure), tokens);
+}
+
+function closeSettingsDisclosureOpenedBySearch(disclosure) {
+  if (!disclosure || disclosure.dataset.settingsOpenedBySearch !== "true") return;
+  if ("open" in disclosure) disclosure.open = false;
+  delete disclosure.dataset.settingsOpenedBySearch;
+}
+
+function openSettingsSearchAncestorDisclosure(node) {
+  const disclosure = node?.closest?.(".settings-disclosure");
+  if (!disclosure) return;
+  setHiddenIfChanged(disclosure, false);
+  if (!disclosure.open) {
+    disclosure.dataset.settingsOpenedBySearch = "true";
+    disclosure.open = true;
+  }
+}
+
 function syncSettingsDisclosuresForSearch(query) {
   if (!query) {
-    for (const disclosure of elements.inspectorBody.querySelectorAll('[data-settings-open-on-search][data-settings-opened-by-search="true"]')) {
-      if ("open" in disclosure) disclosure.open = false;
-      delete disclosure.dataset.settingsOpenedBySearch;
-    }
+    for (const disclosure of elements.inspectorBody.querySelectorAll('[data-settings-opened-by-search="true"]')) closeSettingsDisclosureOpenedBySearch(disclosure);
     state.settingsSearchDisclosuresOpenVersion = 0;
+    state.settingsSearchDisclosuresOpenQuery = "";
     return { mountedContent: false, complete: true };
   }
-  if (state.settingsSearchDisclosuresOpenVersion === state.settingsSearchIndexVersion) {
+  if (
+    state.settingsSearchDisclosuresOpenVersion === state.settingsSearchIndexVersion
+    && state.settingsSearchDisclosuresOpenQuery === query
+  ) {
     return { mountedContent: false, complete: true };
   }
   let mountedContent = false;
   let mountedThisPass = 0;
   let remaining = 0;
   const mountBatchLimit = settingsDisclosureSearchMountBatchLimit();
+  const tokens = settingsSearchTokensNormalized(query);
   for (const disclosure of elements.inspectorBody.querySelectorAll("[data-settings-open-on-search]")) {
+    const matches = settingsDisclosureMatchesSearch(disclosure, tokens);
+    if (!matches) {
+      closeSettingsDisclosureOpenedBySearch(disclosure);
+      continue;
+    }
     if ("open" in disclosure && !disclosure.open) {
       disclosure.dataset.settingsOpenedBySearch = "true";
       disclosure.open = true;
     }
   }
   for (const disclosure of elements.inspectorBody.querySelectorAll(".settings-disclosure")) {
+    const openedBySearch = disclosure.dataset.settingsOpenedBySearch === "true";
+    const matches = settingsDisclosureMatchesSearch(disclosure, tokens);
+    if (!matches && openedBySearch) closeSettingsDisclosureOpenedBySearch(disclosure);
+    const shouldMount = disclosure.open || matches;
+    if (!shouldMount) continue;
     if (disclosure.dataset.disclosureMounted === "true") continue;
     if (mountedThisPass >= mountBatchLimit) {
       remaining += 1;
       continue;
     }
     const wasMounted = disclosure.dataset.disclosureMounted === "true";
-    if (!disclosure.open) disclosure.open = true;
+    if (!disclosure.open) {
+      disclosure.dataset.settingsOpenedBySearch = "true";
+      disclosure.open = true;
+    }
     const mounted = ensureSettingsDisclosureContent(disclosure)
       || (!wasMounted && disclosure.dataset.disclosureMounted === "true");
     mountedContent = mounted || mountedContent;
@@ -24305,6 +24362,7 @@ function processSettingsFilterSection(job, sectionRecord) {
     setHiddenIfChanged(item, !visible);
     sectionVisible ||= visible;
     if (itemMatches) {
+      openSettingsSearchAncestorDisclosure(item);
       job.matchingItems += 1;
       job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, item, sectionTitle);
     }
@@ -24316,6 +24374,7 @@ function processSettingsFilterSection(job, sectionRecord) {
     setHiddenIfChanged(group, !groupVisible);
     sectionVisible ||= groupVisible;
     if (groupMatches) {
+      openSettingsSearchAncestorDisclosure(group);
       job.matchingItems += 1;
       job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, group, sectionTitle);
     }
@@ -24395,7 +24454,10 @@ function applySettingsFilter() {
   const sections = state.settingsSearchIndex.length && !mountedDisclosureContent
     ? state.settingsSearchIndex
     : rebuildSettingsSearchIndex();
-  if (query && disclosureSync.complete) state.settingsSearchDisclosuresOpenVersion = state.settingsSearchIndexVersion;
+  if (query && disclosureSync.complete) {
+    state.settingsSearchDisclosuresOpenVersion = state.settingsSearchIndexVersion;
+    state.settingsSearchDisclosuresOpenQuery = query;
+  }
   const pendingAutoScroll = query && state.settingsSearchAutoScrollQuery === query;
   const mayAutoScroll = Boolean(!searchStillMounting && query
     && (pendingAutoScroll || elements.inspectorBody.scrollTop === 0));
@@ -28663,9 +28725,12 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
   const openingToolsForSearch = Boolean(normalizeSettingsQuery(state.settingsQuery));
   tools.open = openingToolsForSearch;
   if (openingToolsForSearch) tools.dataset.settingsOpenedBySearch = "true";
-  tools.dataset.settingsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes");
+  tools.dataset.settingsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes customize saved library actions");
   tools.addEventListener("toggle", () => {
-    if (!tools.open && normalizeSettingsQuery(state.settingsQuery)) state.settingsSearchDisclosuresOpenVersion = 0;
+    if (!tools.open && normalizeSettingsQuery(state.settingsQuery)) {
+      state.settingsSearchDisclosuresOpenVersion = 0;
+      state.settingsSearchDisclosuresOpenQuery = "";
+    }
   });
   panel.querySelector(".quick-overview-subtitle").textContent = folder;
   const saveSetup = panel.querySelector('[data-quick-setup-action="save"]');
@@ -29837,12 +29902,42 @@ function ensureSettingsDisclosureContent(disclosure) {
   return true;
 }
 
+function settingsDisclosureSavedSearchText(entries, options = {}) {
+  const limit = Math.max(0, Number(options.limit) || 24);
+  const keys = options.keys || ["label", "name", "title", "command", "url", "path", "cwd", "value", "id"];
+  return entries.slice(0, limit).map((entry) => {
+    if (typeof entry === "string") return entry;
+    if (!entry || typeof entry !== "object") return "";
+    return keys.map((key) => entry[key]).filter(Boolean).join(" ");
+  }).join(" ");
+}
+
+function savedSettingsProfileDisclosureSearchText() {
+  return state.savedSettingsProfiles.map((profile) => [
+    profile.label,
+    profile.settings ? settingsProfileSummary(profile.settings) : ""
+  ].join(" ")).join(" ");
+}
+
+function workspaceBlueprintDisclosureSearchText() {
+  return state.workspaceBlueprints.map((blueprint) => [
+    blueprint.label,
+    workspaceBlueprintSummary(blueprint)
+  ].join(" ")).join(" ");
+}
+
+function commandSnippetDisclosureSearchText() {
+  return [...builtInTerminalCommandSnippets, ...state.customCommandSnippets]
+    .map((snippet) => [snippet.label, snippet.command, snippet.body].filter(Boolean).join(" "))
+    .join(" ");
+}
+
 function settingsDisclosurePanel({ className, content, searchTerms, title, body, meta }) {
   const details = document.createElement("details");
   details.className = `settings-disclosure ${className}`.trim();
   details.dataset.disclosureContent = content;
   details.dataset.disclosureMounted = "false";
-  details.dataset.settingsSearch = normalizeSettingsQuery(searchTerms);
+  details.dataset.settingsSearch = normalizeSettingsQuery(`${title} ${body} ${meta} ${searchTerms}`);
   const summary = document.createElement("summary");
   summary.className = "settings-disclosure-summary";
   summary.innerHTML = `
@@ -29858,7 +29953,10 @@ function settingsDisclosurePanel({ className, content, searchTerms, title, body,
   details.append(summary);
   details.addEventListener("toggle", () => {
     if (details.open) ensureSettingsDisclosureContent(details);
-    else if (normalizeSettingsQuery(state.settingsQuery)) state.settingsSearchDisclosuresOpenVersion = 0;
+    else if (normalizeSettingsQuery(state.settingsQuery)) {
+      state.settingsSearchDisclosuresOpenVersion = 0;
+      state.settingsSearchDisclosuresOpenQuery = "";
+    }
   });
   return details;
 }
@@ -29868,7 +29966,7 @@ function quickActionDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "quick-action-disclosure",
     content: "quick-actions",
-    searchTerms: "quick setup all actions terminal browser clean speed focus background layout active pane settings rename color save saved library customization",
+    searchTerms: "quick setup all actions terminal browser clean speed focus background layout active pane settings rename color save saved library customization shortcuts launcher",
     title: t("quickGuide.allActions"),
     body: t("quickGuide.allActions.body"),
     meta: formatMessage("quickGuide.actionCount", { count: actions.length })
@@ -29879,7 +29977,7 @@ function quickCategoryDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "quick-category-disclosure",
     content: "quick-categories",
-    searchTerms: "quick setup settings pages shortcuts customize workspace appearance layout terminal browser performance profiles data",
+    searchTerms: "quick setup settings pages shortcuts customize workspace appearance layout terminal browser performance profiles data categories",
     title: t("quickGuide.settingsPages"),
     body: t("quickGuide.settingsPages.body"),
     meta: formatMessage("quickGuide.pageCount", { count: quickSettingsShortcuts.length })
@@ -29890,7 +29988,7 @@ function quickPresetDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "quick-preset-disclosure",
     content: "quick-presets",
-    searchTerms: "quick setup presets theme appearance color layout terminal browser performance focus clean style",
+    searchTerms: "quick setup presets theme appearance color layout terminal browser performance focus clean style saved setup profiles",
     title: t("quickGuide.presets"),
     body: t("quickGuide.presets.body"),
     meta: formatMessage("quickGuide.presetCount", { count: settingsPresets.length })
@@ -29912,7 +30010,7 @@ function savedBackgroundDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "appearance-saved-background-disclosure",
     content: "saved-backgrounds",
-    searchTerms: "appearance saved backgrounds image wallpaper library apply rename delete save copy paste choose clipboard json",
+    searchTerms: `appearance saved backgrounds image wallpaper library apply rename delete save copy paste choose clipboard json ${settingsDisclosureSavedSearchText(state.savedBackgroundImages, { keys: ["label", "name", "url", "path", "value", "id"] })}`,
     title: t("appearance.savedBackgrounds"),
     body: t("appearance.savedBackgrounds.body"),
     meta: formatMessage("appearance.savedBackgroundCount", { count: state.savedBackgroundImages.length })
@@ -29956,7 +30054,7 @@ function settingsProfilesDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "settings-profiles-disclosure",
     content: "settings-profiles",
-    searchTerms: "profiles saved settings profile preset apply save rename delete built in appearance layout terminal performance",
+    searchTerms: `profiles saved settings profile preset apply save rename delete built in appearance layout terminal performance ${savedSettingsProfileDisclosureSearchText()}`,
     title: t("profiles.savedProfiles"),
     body: t("profiles.savedProfiles.body"),
     meta: formatMessage("profiles.savedProfileCount", {
@@ -29970,7 +30068,7 @@ function workspaceBlueprintsDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "workspace-blueprints-disclosure",
     content: "workspace-blueprints",
-    searchTerms: "blueprints saved workspace layout pane template terminal browser split apply new save copy paste update rename delete starter layouts clipboard json",
+    searchTerms: `blueprints saved workspace layout pane template terminal browser split apply new save copy paste update rename delete starter layouts clipboard json ${workspaceBlueprintDisclosureSearchText()}`,
     title: t("blueprints.savedBlueprints"),
     body: t("blueprints.savedBlueprints.body"),
     meta: formatMessage("blueprints.savedBlueprintCount", {
@@ -29984,7 +30082,7 @@ function commandSnippetsDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "command-snippets-disclosure",
     content: "command-snippets",
-    searchTerms: "commands snippets terminal launcher saved built in custom git github gh cli add copy paste edit delete run clipboard json",
+    searchTerms: `commands snippets terminal launcher saved built in custom git github gh cli add copy paste edit delete run clipboard json ${commandSnippetDisclosureSearchText()}`,
     title: t("commands.snippets"),
     body: t("commands.snippets.body"),
     meta: formatMessage("commands.snippetCount", {
@@ -29998,7 +30096,7 @@ function recentFoldersDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "recent-folders-disclosure",
     content: "recent-folders",
-    searchTerms: "workspace recent folders recent workspace folder history directory cwd quick reopen copy paste clipboard json",
+    searchTerms: `workspace recent folders recent workspace folder history directory cwd quick reopen copy paste clipboard json ${settingsDisclosureSavedSearchText(state.recentFolders)}`,
     title: t("workspace.recentFolders"),
     body: t("workspace.recentFolders.body"),
     meta: formatMessage("workspace.recentFolderCount", {
@@ -30034,7 +30132,7 @@ function savedColorsDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "appearance-saved-colors-disclosure",
     content: "appearance-saved-colors",
-    searchTerms: "appearance saved color palette custom accent workspace tab pane color profile",
+    searchTerms: `appearance saved color palette custom accent workspace tab pane color profile ${settingsDisclosureSavedSearchText(state.customColorPalette, { keys: ["label", "name", "value", "color", "hex", "id"] })}`,
     title: t("appearance.savedColors"),
     body: t("appearance.savedColors.body"),
     meta: formatMessage("appearance.savedColorCount", {
@@ -30059,7 +30157,7 @@ function recentBrowserPagesDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "browser-recent-pages-disclosure",
     content: "browser-recent-pages",
-    searchTerms: "browser recent pages urls web history open home clear copy paste clipboard json",
+    searchTerms: `browser recent pages urls web history open home clear copy paste clipboard json ${settingsDisclosureSavedSearchText(state.recentBrowserPages)}`,
     title: t("browser.recentPages"),
     body: t("browser.recentPages.body"),
     meta: formatMessage("browser.recentPageCount", {
@@ -30074,7 +30172,7 @@ function browserTabSessionsDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "browser-tab-sessions-disclosure",
     content: "browser-tab-sessions",
-    searchTerms: "browser tabs sessions saved restore duplicate copy paste clipboard json",
+    searchTerms: `browser tabs sessions saved restore duplicate copy paste clipboard json ${settingsDisclosureSavedSearchText(entries, { keys: ["label", "title", "activeHost", "activeUrl", "workspaceTitle", "id"] })}`,
     title: "Browser tab sessions",
     body: "Copy, paste, and duplicate saved browser tab groups.",
     meta: browserTabSessionsMeta(entries)
@@ -30118,7 +30216,7 @@ function recentCommandsDisclosurePanel() {
   return settingsDisclosurePanel({
     className: "data-recent-commands-disclosure",
     content: "data-recent-commands",
-    searchTerms: "data recent terminal commands shell command history run clear copy paste clipboard json snippets",
+    searchTerms: `data recent terminal commands shell command history run clear copy paste clipboard json snippets ${settingsDisclosureSavedSearchText(state.recentCommands)}`,
     title: t("data.recentCommands"),
     body: t("data.recentCommands.body"),
     meta: formatMessage("data.recentCommandCount", {
