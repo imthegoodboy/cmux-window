@@ -17354,13 +17354,15 @@ function renderSettingsChrome(host) {
       renderSettingsInspector({ resetScroll: true });
     },
     onQuery: (query) => {
+      const previousDisplayedCategory = displayedSettingsCategory();
       const wasSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
       state.settingsQuery = query;
       const isSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
+      const displayedCategoryChanged = previousDisplayedCategory !== displayedSettingsCategory();
       state.settingsSearchResultText = isSearching ? t("settings.searching") : "";
       refreshSettingsInspectorSubtitle();
       if (!wasSearching && isSearching) queueSettingsSearchAutoScroll();
-      if (wasSearching !== isSearching) {
+      if (wasSearching !== isSearching || displayedCategoryChanged) {
         state.settingsSearchFocusPending = true;
         setSettingsSearchBusy(isSearching);
         scheduleSettingsInspectorRender({
@@ -17387,16 +17389,18 @@ function settingsSearch() {
   input.setAttribute("aria-label", t("settings.searchPlaceholder"));
   input.value = state.settingsQuery;
   input.addEventListener("input", () => {
+    const previousDisplayedCategory = displayedSettingsCategory();
     const wasSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
     state.settingsQuery = input.value;
     wrapper.classList.toggle("has-query", Boolean(state.settingsQuery));
     clear.disabled = !state.settingsQuery;
     const isSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
+    const displayedCategoryChanged = previousDisplayedCategory !== displayedSettingsCategory();
     state.settingsSearchResultText = isSearching ? t("settings.searching") : "";
     refreshSettingsInspectorSubtitle();
     setSettingsSearchResultText(state.settingsSearchResultText);
     if (!wasSearching && isSearching) queueSettingsSearchAutoScroll();
-    if (wasSearching !== isSearching) {
+    if (wasSearching !== isSearching || displayedCategoryChanged) {
       state.settingsSearchFocusPending = true;
       setSettingsSearchBusy(isSearching);
       scheduleSettingsInspectorRender({
@@ -28808,7 +28812,7 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
     </details>
   `;
   const tools = panel.querySelector("[data-quick-tools]");
-  const toolsSearch = normalizeSettingsQuery("quick setup tools controls customize saved setup library actions");
+  const toolsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes customize saved library actions");
   tools.dataset.settingsSearch = toolsSearch;
   const query = normalizeSettingsQuery(state.settingsQuery);
   const openingToolsForSearch = Boolean(query && settingsSearchMatchesNormalized(toolsSearch, settingsSearchTokensNormalized(query)));
@@ -29140,6 +29144,7 @@ function quickSetupMapPanel() {
 }
 
 const quickSetupPresetRailItems = [
+  { id: "crisp", label: "Crisp", body: "Sharp UI", icon: "clean", search: "crisp sharp clear no blur no fuzz high contrast clean ui fast performance" },
   { id: "simpleFast", label: "Clean + Fast", body: "Simple speed", icon: "speed", search: "clean fast simple minimal ui speed performance lag startup" },
   { id: "simple", label: "Clean", body: "Quiet chrome", icon: "clean", search: "clean simple minimal ui quiet chrome" },
   { id: "performance", label: "Fast", body: "Reduce lag", icon: "speed", search: "fast performance speed lag smooth" },
@@ -29150,7 +29155,10 @@ const quickSetupPresetRailItems = [
 function quickSetupPresetRailPanel() {
   const panel = document.createElement("div");
   panel.className = "quick-preset-rail";
-  panel.dataset.settingsSearch = normalizeSettingsQuery("quick setup clean fast focus balanced preset simple performance restore default");
+  const railSearch = quickSetupPresetRailItems
+    .map((item) => [item.label, item.body, item.search].filter(Boolean).join(" "))
+    .join(" ");
+  panel.dataset.settingsSearch = normalizeSettingsQuery(`quick setup clean fast focus balanced preset simple performance restore default ${railSearch}`);
   for (const item of quickSetupPresetRailItems) {
     const preset = settingsPresetById(item.id);
     if (!preset) continue;
@@ -29159,6 +29167,7 @@ function quickSetupPresetRailPanel() {
     button.className = `quick-preset-rail-item${active ? " is-active" : ""}`;
     button.type = "button";
     button.disabled = active;
+    button.dataset.quickPreset = item.id;
     button.setAttribute("aria-pressed", active ? "true" : "false");
     button.title = active ? `${item.label} preset is already active.` : `${item.label}: ${preset.body}`;
     button.dataset.settingsSearch = normalizeSettingsQuery(`quick setup preset ${item.label} ${item.body} ${preset.body} ${item.search}`);
