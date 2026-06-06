@@ -7911,7 +7911,7 @@ function terminalThemeSignature(panel = null) {
     state.settings.terminalBackground || terminalColorDefaults.background,
     state.settings.terminalForeground || terminalColorDefaults.foreground,
     state.settings.terminalCursorColor || "",
-    paneBackground ? "pane-bg" : ""
+    paneBackground
   ].join("|");
 }
 
@@ -14510,7 +14510,8 @@ function syncBrowserViewBounds(session) {
   if (!view?.isConnected) return false;
   const bounds = browserViewBounds(session);
   if (!bounds) return false;
-  const signature = `${bounds.width}x${bounds.height}`;
+  const pixelRatio = Math.round((window.devicePixelRatio || 1) * 100) / 100;
+  const signature = `${bounds.width}x${bounds.height}@${pixelRatio}`;
   if (session.browserViewBoundsSignature === signature) return false;
   session.browserViewBoundsSignature = signature;
   view.style.width = `${bounds.width}px`;
@@ -18335,11 +18336,16 @@ function activeBackgroundPanel(options = {}) {
   useAsApp.dataset.backgroundAction = "use-as-app";
   useAsApp.disabled = useAsAppModel.disabled;
   useAsApp.title = useAsAppModel.title;
+  const everywhereModel = currentBackgroundEverywhereModel(targetStatus.scope);
+  const useEverywhere = settingsActionButton(everywhereModel.active ? "Everywhere active" : "Use everywhere", () => applyCurrentBackgroundEverywhere(state.backgroundApplyTarget, activeWorkspace()), "", `active background apply selected target everywhere full app whole window all terminal panes workspace ${everywhereModel.search}`);
+  useEverywhere.dataset.backgroundAction = "use-everywhere";
+  useEverywhere.disabled = everywhereModel.disabled;
+  useEverywhere.title = everywhereModel.title;
   const clear = settingsActionButton(backgroundApplyTargetClearLabel(targetStatus.scope), clearBackgroundApplyTarget, "danger", "active background clear selected target app pane all terminals");
   clear.dataset.backgroundAction = "clear";
   clear.title = `Clear ${targetLabel}`;
   clear.disabled = !targetStatus.canTarget || !targetStatus.hasValue;
-  const scopeGroup = backgroundActionGroup("Target", "active background selected target app pane all terminals use app use as app clear", [applyCurrent, useAsApp, clear]);
+  const scopeGroup = backgroundActionGroup("Target", "active background selected target app pane all terminals use app use as app use everywhere full app whole window clear", [applyCurrent, useAsApp, useEverywhere, clear]);
   scopeGroup.classList.add("background-action-group-scope");
   actions.append(imageGroup, setupGroup, scopeGroup);
   if (options.tuning) {
@@ -42578,6 +42584,7 @@ async function openBrowserPrompt(workspaceId = null) {
     await openExternalBrowser(url);
     return true;
   }
+  closeInspectorForWorkspace({ render: false });
   await createPanel("browser", newPaneDirection(), { url, workspaceId });
 }
 
@@ -42586,6 +42593,7 @@ function openBrowserHome(workspaceId = activeWorkspace()?.id, options = {}) {
   if (launchMode === "external") {
     return openExternalBrowser(state.settings.browserHomeUrl);
   }
+  closeInspectorForWorkspace({ render: false });
   return createPanel("browser", newPaneDirection(options.direction), { url: state.settings.browserHomeUrl, workspaceId });
 }
 
@@ -43732,6 +43740,15 @@ function openInspector(mode) {
   if (state.inspectorMode !== "settings") state.settingsSearchFocusPending = false;
   updateRailButtons();
   render();
+}
+
+function closeInspectorForWorkspace(options = {}) {
+  if (!state.inspectorMode) return false;
+  state.inspectorMode = null;
+  state.settingsSearchFocusPending = false;
+  updateRailButtons();
+  if (options.render !== false) render();
+  return true;
 }
 
 function openSettingsCategory(category = "quick", options = {}) {
@@ -45876,6 +45893,7 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("wheel", handleWindowWheelZoom, { passive: false, capture: true });
 window.addEventListener("resize", () => scheduleVisibleBrowserViewBoundsSync(browserViewBoundsSyncFrames), { passive: true });
+window.visualViewport?.addEventListener("resize", () => scheduleVisibleBrowserViewBoundsSync(browserViewBoundsSyncFrames), { passive: true });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     flushTerminalFontSizeSync({ keepalive: true });

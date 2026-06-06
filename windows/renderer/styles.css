@@ -1463,8 +1463,8 @@ body.reduce-motion *::after {
 }
 
 .workspace-row:not(.is-active) .workspace-close {
-  opacity: 0;
-  pointer-events: none;
+  opacity: .52;
+  pointer-events: auto;
 }
 
 .workspace-row:not(.is-active):hover .workspace-close,
