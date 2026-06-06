@@ -21,6 +21,12 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function fetchText(url, label) {
+  const response = await fetch(url);
+  assert(response.ok, `${label} fetch failed`);
+  return response.text();
+}
+
 function pipeRoundTrip(command, launchToken, timeoutMs = smokeIoTimeoutMs) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(pipeName);
@@ -158,6 +164,32 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
     }
     return rawFetch(resource, options);
   };
+
+  const rendererHtml = await fetchText(info.url, "renderer shell");
+  assert(rendererHtml.includes('id="splitRightButton"'), "renderer shell should keep split terminal in the titlebar");
+  assert(!rendererHtml.includes('id="newTerminalButton"'), "renderer shell should not put the terminal launcher in the titlebar");
+  assert(!rendererHtml.includes('id="newBrowserButton"'), "renderer shell should not put the browser launcher in the titlebar");
+
+  const rendererApp = await fetchText(`${info.url}app.js`, "renderer app");
+  assert(rendererApp.includes("Use everywhere"), "active background panel should expose a use-everywhere action");
+  assert(!rendererApp.includes("ensureToolbarLaunchButton"), "renderer app should not dynamically recreate titlebar launch buttons");
+  assert(rendererApp.includes("crowdedPaneAutoLayoutPanelThreshold = 5"), "crowded pane auto layout should stay enabled");
+  assert(rendererApp.includes("migrateCrowdedPaneTree(workspace, tree)"), "existing crowded pane trees should be migrated");
+  assert(rendererApp.includes("maybeApplyCrowdedPaneAutoLayout(workspace.id, createdPanel?.id"), "new pane creation should apply crowded-pane auto layout");
+  assert(
+    /state\.settings\.terminalCursorColor \|\| "",\s*paneBackground\s*\]\.join\("\|"\)/.test(rendererApp),
+    "terminal theme signature should include the actual pane background value"
+  );
+
+  const rendererCss = await fetchText(`${info.url}styles.css`, "renderer styles");
+  assert(
+    /\.topbar \.command-strip #newTerminalButton,\s*\.topbar \.command-strip #newBrowserButton\s*\{\s*display:\s*none !important;\s*\}/.test(rendererCss),
+    "renderer styles should keep titlebar launcher fallback hidden"
+  );
+  assert(
+    /\.workspace-row:not\(\.is-active\) \.workspace-close\s*\{\s*opacity:\s*\.52;\s*pointer-events:\s*auto;\s*\}/.test(rendererCss),
+    "workspace close button should remain visible and clickable on inactive rows"
+  );
 
   const stateResponse = await fetch(`${info.url}api/state`);
   assert(stateResponse.ok, "state endpoint failed");

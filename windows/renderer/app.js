@@ -727,11 +727,13 @@ const settingsWorkspaceSwitchRenderDelayMs = 90;
 const closedPanelLimit = 12;
 const maxConcurrentPaneCreations = 8;
 const newBrowserPaneRightRatio = 0.6;
+const crowdedPaneAutoLayoutPanelThreshold = 5;
 const visibleBackgroundOpacity = 24;
 const terminalCursorMigrationStorageKey = "cmux.terminalCursorBarMigration";
 const browserHomeMigrationStorageKey = "cmux.browserHomeGoogleMigration";
 const browserReadableChromeMigrationStorageKey = "cmux.browserReadableChromeMigration";
 const browserPaneReadableSplitMigrationStoragePrefix = "cmux.browserPaneReadableSplitMigration.";
+const crowdedPaneAutoLayoutMigrationStoragePrefix = "cmux.crowdedPaneAutoLayoutMigration.";
 const sidebarBranchMigrationStorageKey = "cmux.sidebarBranchQuietMigration";
 const addTabHiddenMigrationStorageKey = "cmux.addTabHiddenMigration";
 const settingsPanelWidthMigrationStorageKey = "cmux.settingsPanelReadableWidthMigration";
@@ -7542,6 +7544,7 @@ function paneTreeForWorkspace(workspace, panels = workspace?.panels || []) {
   }
   if (!tree) tree = buildPaneTreeFromPanelIds(panelIds, paneLayoutDirection(workspace));
   tree = migrateReadableBrowserPaneTree(workspace, tree);
+  tree = migrateCrowdedPaneTree(workspace, tree);
   if (!paneTreeEqual(tree, existing)) {
     state.paneTrees.set(workspace.id, tree);
     savePaneTreeLayouts(state.paneTrees);
@@ -7554,6 +7557,58 @@ function paneTreeContainsAnyPanel(node, panelIds) {
     if (paneTreeContainsPanel(node, panelId)) return true;
   }
   return false;
+}
+
+function crowdedPaneAutoLayoutVisiblePanels(workspace) {
+  return (workspace?.panels || []).filter((panel) => !isPanelMinimized(panel));
+}
+
+function crowdedPaneAutoLayoutTree(workspace, activePanelId = workspace?.activePanelId) {
+  const visiblePanels = crowdedPaneAutoLayoutVisiblePanels(workspace);
+  if (!workspace || visiblePanels.length < crowdedPaneAutoLayoutPanelThreshold) return null;
+  const active = visiblePanels.find((panel) => panel.id === activePanelId)
+    || visiblePanels.find((panel) => panel.id === workspace.activePanelId)
+    || visiblePanels[visiblePanels.length - 1];
+  return active
+    ? buildActivePanePresetTree(workspace.panels, active.id, paneLayoutDirection(workspace), 60)
+    : null;
+}
+
+function paneTreeLeafSizeRatios(node, width = 1, height = 1, ratios = new Map()) {
+  if (!node) return ratios;
+  if (node.type === "pane") {
+    if (node.panelId) ratios.set(node.panelId, { width, height });
+    return ratios;
+  }
+  if (node.type !== "split") return ratios;
+  const ratio = paneTreeRatio(node.ratio);
+  if (paneTreeDirection(node.direction) === "down") {
+    paneTreeLeafSizeRatios(node.first, width, height * ratio, ratios);
+    paneTreeLeafSizeRatios(node.second, width, height * (1 - ratio), ratios);
+  } else {
+    paneTreeLeafSizeRatios(node.first, width * ratio, height, ratios);
+    paneTreeLeafSizeRatios(node.second, width * (1 - ratio), height, ratios);
+  }
+  return ratios;
+}
+
+function paneTreeHasCrowdedSlivers(tree, workspace) {
+  const visiblePanels = crowdedPaneAutoLayoutVisiblePanels(workspace);
+  if (!tree || visiblePanels.length < crowdedPaneAutoLayoutPanelThreshold) return false;
+  const ratios = paneTreeLeafSizeRatios(tree);
+  return visiblePanels.some((panel) => {
+    const size = ratios.get(panel.id);
+    return Boolean(size && (size.width < 0.08 || size.height < 0.08));
+  });
+}
+
+function migrateCrowdedPaneTree(workspace, tree) {
+  if (!workspace?.id || !tree || !paneTreeHasCrowdedSlivers(tree, workspace)) return tree;
+  const migrationKey = `${crowdedPaneAutoLayoutMigrationStoragePrefix}${workspace.id}`;
+  if (localStorage.getItem(migrationKey) === "1") return tree;
+  const nextTree = crowdedPaneAutoLayoutTree(workspace);
+  localStorage.setItem(migrationKey, "1");
+  return nextTree && !paneTreeTemplatesMatch(tree, nextTree, workspace.panels) ? nextTree : tree;
 }
 
 function readableBrowserPaneTreeNode(node, browserPanelIds) {
@@ -7599,6 +7654,22 @@ function insertPanelInPaneTree(workspaceId, anchorPanelId, panelId, direction, p
   tree = inserted.inserted ? inserted.node : appendPaneTreeLeaf(tree, panelId, direction, insertOptions);
   state.paneTrees.set(workspaceId, tree);
   savePaneTreeLayouts(state.paneTrees);
+}
+
+function maybeApplyCrowdedPaneAutoLayout(workspaceId, activePanelId, options = {}) {
+  if (options.focus === false || options.autoLayout === false) return false;
+  const workspace = state.data?.workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace || zoomedPanelIdForWorkspace(workspace)) return false;
+  const currentTree = paneTreeForWorkspace(workspace);
+  const nextTree = crowdedPaneAutoLayoutTree(workspace, activePanelId);
+  if (!nextTree || paneTreeTemplatesMatch(currentTree, nextTree, workspace.panels)) return false;
+  state.paneTrees.set(workspace.id, nextTree);
+  savePaneTreeLayouts(state.paneTrees);
+  if (options.render !== false) {
+    scheduleRender();
+  }
+  scheduleWorkspaceTerminalFits(workspace.id, true);
+  return true;
 }
 
 function removePanelFromAllPaneTrees(panelId) {
@@ -42548,16 +42619,19 @@ async function createPanel(type, direction = newPaneDirection(), options = {}) {
       state.browserTabSnapshots.set(createdPanel.id, normalizeBrowserTabSnapshot(options.browserTabs, createdPanel.url || url));
       saveBrowserTabSnapshots(state.browserTabSnapshots);
     }
-    if (pendingPanel) await replacePendingPanel(pendingPanel.id, createdPanel, workspace.id, {
-      ...options,
-      insertRatio,
-      scheduleRender: true
-    });
-    else {
+    if (pendingPanel) {
+      await replacePendingPanel(pendingPanel.id, createdPanel, workspace.id, {
+        ...options,
+        insertRatio,
+        scheduleRender: true
+      });
+      maybeApplyCrowdedPaneAutoLayout(workspace.id, createdPanel?.id, { ...options, render: false });
+    } else {
       insertPanelInPaneTree(workspace.id, anchorPanelId, createdPanel?.id, direction, options.placement || "after", {
         ratio: insertRatio
       });
-      optimisticAddPanel(createdPanel, workspace.id, { direction, focus: options.focus });
+      optimisticAddPanel(createdPanel, workspace.id, { direction, focus: options.focus, scheduleRender: true });
+      maybeApplyCrowdedPaneAutoLayout(workspace.id, createdPanel?.id, { ...options, render: false });
     }
     if (type === "browser" && createdPanel?.url) rememberRecentBrowserPage(createdPanel.url);
     recordPaneCreateDuration(type, performance.now() - createStartedAt);
