@@ -30073,10 +30073,13 @@ function quickCategoryDisclosurePanel() {
 }
 
 function quickPresetDisclosurePanel() {
+  const presetSearchTerms = settingsPresets
+    .map((preset) => [preset.label, preset.body].filter(Boolean).join(" "))
+    .join(" ");
   return settingsDisclosurePanel({
     className: "quick-preset-disclosure",
     content: "quick-presets",
-    searchTerms: "quick setup presets theme appearance color layout terminal browser performance focus clean style saved setup profiles",
+    searchTerms: `quick setup presets theme appearance color layout terminal browser performance focus clean style saved setup profiles ${presetSearchTerms}`,
     title: t("quickGuide.presets"),
     body: t("quickGuide.presets.body"),
     meta: formatMessage("quickGuide.presetCount", { count: settingsPresets.length })
