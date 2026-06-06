@@ -11701,7 +11701,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 }
 
 .quick-overview-speed-meta span:first-child {
-  max-width: 134px;
+  max-width: 184px;
   color: var(--color-faint);
   font: 10px/1 var(--font-mono);
 }
@@ -12011,13 +12011,19 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 .quick-map-title,
 .quick-map-subtitle,
 .quick-map-label,
-.quick-map-value,
-.quick-map-body,
-.quick-map-meta {
+.quick-map-value {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.quick-map-body,
+.quick-map-meta {
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .quick-map-title {
@@ -12035,18 +12041,18 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 .quick-map-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: var(--space-1);
 }
 
 .quick-map-card {
   min-width: 0;
-  min-height: 70px;
+  min-height: 78px;
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);
   align-items: start;
   gap: var(--space-2);
-  padding: 7px 8px;
+  padding: 8px 9px;
   border-color: var(--color-line);
   background: var(--color-pane);
   color: var(--color-text);
@@ -12089,21 +12095,21 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 
 .quick-map-label-row {
   min-width: 0;
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(88px, auto);
+  align-items: start;
   gap: var(--space-1);
 }
 
 .quick-map-label {
-  flex: 1 1 auto;
   color: var(--color-muted);
   font-size: 10px;
   font-weight: 760;
 }
 
 .quick-map-value {
-  flex: 0 1 auto;
-  max-width: 112px;
+  justify-self: end;
+  max-width: min(180px, 100%);
   padding: 3px 5px;
   border: 1px solid color-mix(in oklch, var(--color-accent) 38%, var(--color-line) 62%);
   border-radius: var(--radius-1);
@@ -12115,12 +12121,20 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 .quick-map-body {
   color: var(--color-text);
   font-size: 12px;
+  line-height: 1.25;
   font-weight: 720;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .quick-map-meta {
   color: var(--color-faint);
   font-size: 10px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .quick-preset-rail {
