@@ -6864,7 +6864,8 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   z-index: 4;
   min-width: 0;
   max-width: 100%;
-  overflow: visible;
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 .settings-react-shell .settings-search,
@@ -13841,12 +13842,26 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 .action-workflow-command-list {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-1);
 }
 
 .action-workflow-command-list .settings-action {
   width: 100%;
+  min-height: 34px;
+  height: auto;
+  justify-content: start;
+  text-align: left;
+  white-space: normal;
+}
+
+.action-workflow-command-list .settings-action-label {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .actions-group-grid {
