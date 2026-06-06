@@ -167,12 +167,42 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
 
   const rendererHtml = await fetchText(info.url, "renderer shell");
   assert(rendererHtml.includes('id="splitRightButton"'), "renderer shell should keep split terminal in the titlebar");
-  assert(!rendererHtml.includes('id="newTerminalButton"'), "renderer shell should not put the terminal launcher in the titlebar");
-  assert(!rendererHtml.includes('id="newBrowserButton"'), "renderer shell should not put the browser launcher in the titlebar");
+  assert(!rendererHtml.includes('id="newTerminalButton"'), "renderer shell should keep the terminal launcher out of the titlebar");
+  assert(!rendererHtml.includes('id="newBrowserButton"'), "renderer shell should keep the browser launcher out of the titlebar");
 
   const rendererApp = await fetchText(`${info.url}app.js`, "renderer app");
   assert(rendererApp.includes("Use everywhere"), "active background panel should expose a use-everywhere action");
+  assert(
+    /cycleTemplate\.dataset\.backgroundAction = "cycle-template";[\s\S]*active background image cycle template choose paste save copy open/.test(rendererApp),
+    "active background panel should expose a direct cycle-template action"
+  );
+  assert(rendererApp.includes("function openBackgroundSettings"), "background settings should use a focused navigation helper");
+  assert(rendererApp.includes('panel.dataset.settingsScrollTarget = "background"'), "active background panel should be a settings scroll target");
+  assert(
+    !/Open Background Settings", shortcut: "", run: \(\) => openSettingsCategory\("appearance", \{ query: "background"/.test(rendererApp),
+    "background settings command should not open a broad background search"
+  );
   assert(!rendererApp.includes("ensureToolbarLaunchButton"), "renderer app should not dynamically recreate titlebar launch buttons");
+  assert(!rendererApp.includes("newTerminalButton"), "renderer app should not bind a removed titlebar terminal launcher");
+  assert(!rendererApp.includes("newBrowserButton"), "renderer app should not bind a removed titlebar browser launcher");
+  assert(rendererApp.includes("getNewSurfaceTabs(workspace)"), "surface tab strip should keep terminal and browser add controls");
+  assert(rendererApp.includes('className: "surface-new-terminal"'), "surface tab strip should expose a terminal add control");
+  assert(rendererApp.includes('className: "surface-new-browser"'), "surface tab strip should expose a browser add control");
+  assert(rendererApp.includes("maybeApplyReadableBrowserPaneLayout"), "browser panes should be promoted out of unreadable split slots");
+  assert(rendererApp.includes("browserReadableLayoutMinHeightRatio"), "browser pane layout should guard against short half-rendered slots");
+  assert(rendererApp.includes("rect.width > 0 ? rect.width"), "browser view bounds should use the visible pane rect before client fallback");
+  assert(
+    /setPaneSplitterPercent[\s\S]*scheduleVisibleBrowserViewBoundsSync\(browserViewBoundsSyncFrames\);[\s\S]*scheduleLayoutSettingsRefresh/.test(rendererApp),
+    "exact split resizing should resync browser view bounds"
+  );
+  assert(
+    /scheduleBrowserViewBoundsForPanelIds\(panelIds, browserViewBoundsSyncFrames\);[\s\S]*if \(typeof ResizeObserver === "function"\) return;/.test(rendererApp),
+    "drag split resizing should resync browser view bounds before relying on ResizeObserver"
+  );
+  assert(rendererApp.includes("clearPaneLayoutWeightsForWorkspace(workspace)"), "browser auto layout should clear stale pane weights");
+  assert(rendererApp.includes("scheduleReadableBrowserPaneDomGuard(workspace)"), "rendered browser panes should be checked for unreadable DOM sizes");
+  assert(rendererApp.includes("browserCompactChromeMigrationStorageKey"), "full browser chrome should migrate to the cleaner compact default");
+  assert(rendererApp.includes("state.performanceGuardSlowRenderCount += value >= renderVerySlowFrameMs ? 2 : 1"), "performance guard should require repeated slow render evidence");
   assert(rendererApp.includes("crowdedPaneAutoLayoutPanelThreshold = 5"), "crowded pane auto layout should stay enabled");
   assert(rendererApp.includes("migrateCrowdedPaneTree(workspace, tree)"), "existing crowded pane trees should be migrated");
   assert(rendererApp.includes("maybeApplyCrowdedPaneAutoLayout(workspace.id, createdPanel?.id"), "new pane creation should apply crowded-pane auto layout");
@@ -182,9 +212,15 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   );
 
   const rendererCss = await fetchText(`${info.url}styles.css`, "renderer styles");
+  assert(rendererCss.includes("grid-template-rows: minmax(0, 1fr);"), "root shell should define a single full-height grid row");
+  assert(rendererCss.includes(".shell > *:not(.window-resize-edge)"), "resize handles should not be converted into shell grid items");
+  assert(rendererCss.includes("max-height: 100%;"), "browser view should be clamped to its pane height");
+  assert(rendererCss.includes("grid-template-columns: 14px minmax(0, 1fr);"), "settings page tabs should show icon and label at readable widths");
+  assert(!rendererCss.includes("#newTerminalButton"), "renderer styles should not target a removed titlebar terminal launcher");
+  assert(!rendererCss.includes("#newBrowserButton"), "renderer styles should not target a removed titlebar browser launcher");
   assert(
-    /\.topbar \.command-strip #newTerminalButton,\s*\.topbar \.command-strip #newBrowserButton\s*\{\s*display:\s*none !important;\s*\}/.test(rendererCss),
-    "renderer styles should keep titlebar launcher fallback hidden"
+    !/\.topbar \.command-strip #newTerminalButton,\s*\.topbar \.command-strip #newBrowserButton\s*\{\s*display:\s*none !important;\s*\}/.test(rendererCss),
+    "renderer styles should not force-hide titlebar launcher buttons"
   );
   assert(
     /\.workspace-row:not\(\.is-active\) \.workspace-close\s*\{\s*opacity:\s*\.52;\s*pointer-events:\s*auto;\s*\}/.test(rendererCss),
