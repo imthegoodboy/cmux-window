@@ -5,10 +5,16 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const releaseRoot = path.resolve(__dirname, "..", "release", "win-unpacked");
+const releaseParent = path.resolve(__dirname, "..", "release");
+const releaseRoot = path.join(releaseParent, "win-unpacked");
 const script = `
 $ErrorActionPreference = "Stop"
+$releaseParent = [System.IO.Path]::GetFullPath($env:CMUX_RELEASE_PARENT).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
 $releaseRoot = [System.IO.Path]::GetFullPath($env:CMUX_RELEASE_ROOT).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+$releaseParentPrefix = $releaseParent + [System.IO.Path]::DirectorySeparatorChar
+if (-not $releaseRoot.StartsWith($releaseParentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw "Refusing to clean release directory outside $releaseParent"
+}
 $releaseRootPrefix = $releaseRoot + [System.IO.Path]::DirectorySeparatorChar
 $targets = @()
 Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
@@ -48,6 +54,18 @@ if ([System.IO.Directory]::Exists($releaseRoot)) {
       }
     }
   }
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
+    try {
+      Remove-Item -LiteralPath $releaseRoot -Recurse -Force -ErrorAction Stop
+      Write-Output "Removed stale unpacked release directory."
+      break
+    } catch {
+      if ($attempt -eq 5) {
+        throw
+      }
+      Start-Sleep -Milliseconds (250 * $attempt)
+    }
+  }
 }
 exit 0
 `;
@@ -62,6 +80,7 @@ const result = spawnSync("powershell.exe", [
   encoding: "utf8",
   env: {
     ...process.env,
+    CMUX_RELEASE_PARENT: releaseParent,
     CMUX_RELEASE_ROOT: releaseRoot
   }
 });
