@@ -24281,9 +24281,18 @@ function closeSettingsDisclosureOpenedBySearch(disclosure) {
   delete disclosure.dataset.settingsOpenedBySearch;
 }
 
-function openSettingsSearchAncestorDisclosure(node) {
+function settingsSearchCanOpenDisclosureForQuery(disclosure, query = "") {
+  if (!disclosure) return false;
+  const categoryId = settingsSearchExactCategoryId(query);
+  if (!categoryId) return true;
+  const sectionCategory = disclosure.closest?.(".settings-section")?.dataset.settingsCategorySection || "";
+  return sectionCategory === categoryId;
+}
+
+function openSettingsSearchAncestorDisclosure(node, query = "") {
   const disclosure = node?.closest?.(".settings-disclosure");
   if (!disclosure) return;
+  if (!settingsSearchCanOpenDisclosureForQuery(disclosure, query)) return;
   setHiddenIfChanged(disclosure, false);
   if (!disclosure.open) {
     disclosure.dataset.settingsOpenedBySearch = "true";
@@ -24310,6 +24319,10 @@ function syncSettingsDisclosuresForSearch(query) {
   const mountBatchLimit = settingsDisclosureSearchMountBatchLimit();
   const tokens = settingsSearchTokensNormalized(query);
   for (const disclosure of elements.inspectorBody.querySelectorAll("[data-settings-open-on-search]")) {
+    if (!settingsSearchCanOpenDisclosureForQuery(disclosure, query)) {
+      closeSettingsDisclosureOpenedBySearch(disclosure);
+      continue;
+    }
     const matches = settingsDisclosureMatchesSearch(disclosure, tokens);
     if (!matches) {
       closeSettingsDisclosureOpenedBySearch(disclosure);
@@ -24322,7 +24335,8 @@ function syncSettingsDisclosuresForSearch(query) {
   }
   for (const disclosure of elements.inspectorBody.querySelectorAll(".settings-disclosure")) {
     const openedBySearch = disclosure.dataset.settingsOpenedBySearch === "true";
-    const matches = settingsDisclosureMatchesSearch(disclosure, tokens);
+    const matches = settingsSearchCanOpenDisclosureForQuery(disclosure, query)
+      && settingsDisclosureMatchesSearch(disclosure, tokens);
     if (!matches && openedBySearch) closeSettingsDisclosureOpenedBySearch(disclosure);
     const shouldMount = disclosure.open || matches;
     if (!shouldMount) continue;
@@ -24430,7 +24444,7 @@ function processSettingsFilterSection(job, sectionRecord) {
     setHiddenIfChanged(item, !visible);
     sectionVisible ||= visible;
     if (itemMatches) {
-      openSettingsSearchAncestorDisclosure(item);
+      openSettingsSearchAncestorDisclosure(item, job.query);
       job.matchingItems += 1;
       job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, item, sectionTitle, job.tokens);
     }
@@ -24442,7 +24456,7 @@ function processSettingsFilterSection(job, sectionRecord) {
     setHiddenIfChanged(group, !groupVisible);
     sectionVisible ||= groupVisible;
     if (groupMatches) {
-      openSettingsSearchAncestorDisclosure(group);
+      openSettingsSearchAncestorDisclosure(group, job.query);
       job.matchingItems += 1;
       job.bestTarget = maybeUpdateSettingsSearchTarget(job.bestTarget, group, sectionTitle, job.tokens);
     }
@@ -28794,7 +28808,7 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
     </details>
   `;
   const tools = panel.querySelector("[data-quick-tools]");
-  const toolsSearch = normalizeSettingsQuery("quick setup tools controls rename layout colors browser data saved setup background terminal performance commands workspace panes customize saved library actions");
+  const toolsSearch = normalizeSettingsQuery("quick setup tools controls customize saved setup library actions");
   tools.dataset.settingsSearch = toolsSearch;
   const query = normalizeSettingsQuery(state.settingsQuery);
   const openingToolsForSearch = Boolean(query && settingsSearchMatchesNormalized(toolsSearch, settingsSearchTokensNormalized(query)));
