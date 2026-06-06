@@ -21,10 +21,13 @@ npm install
 npm run dist:win
 ```
 
-The installer is written to `windows/release/cmux-0.1.0-setup.exe`.
+The installer is written to `windows/release/cmux-0.1.1-setup.exe`.
 The app, shortcut, executable, and installer are named `cmux`. This is an
 unofficial community Windows build; official upstream cmux releases remain
 macOS-focused.
+
+The unpacked build used for quick testing is written to
+`windows/release/win-unpacked/cmux.exe` by `npm run pack:win`.
 
 ## CLI
 
@@ -59,6 +62,8 @@ Implemented in this milestone:
 - Compact Tools menu for workspace/session actions so the default top bar stays simple.
 - Chrome-style surface tabs with a new-tab button, drag reordering, workspace drop targets, right-click rename/duplicate/focus/move/close/close-others actions, and swatch/custom per-tab colors.
 - Browser panes with address/search normalization, back/forward/reload/home controls, open-external fallback, and configurable home page.
+- Browser tabs with rename, duplicate, drag reorder, drag between browser panes, and direct right/below pane placement.
+- Windows-style terminal clipboard handling: `Ctrl+C` copies selected terminal text, `Ctrl+V` pastes clipboard text, and `Ctrl+C` still interrupts the shell when no terminal text is selected.
 - Workspace right-click menus for focus, rename, color, new terminal/browser, new workspace, and close actions.
 - Pane drag/drop docking hints for left, right, top, and bottom terminal placement, active-pane focus mode, percent-based active-pane resizing from Settings/Tools, and optimistic workspace/tab updates so moves, closes, and focus changes feel immediate.
 - Large terminal output is flushed incrementally across animation frames so heavy command output does not monopolize the renderer.

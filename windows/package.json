@@ -1,6 +1,6 @@
 {
   "name": "cmux",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "productName": "cmux",
   "private": true,
   "description": "cmux desktop app for Windows with terminal workspaces, browser panes, notifications, and customization.",

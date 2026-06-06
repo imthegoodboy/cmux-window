@@ -59,6 +59,11 @@ function isSafeColorValue(value) {
   return workspaceColors.includes(color) || /^#[0-9a-f]{6}$/i.test(color);
 }
 
+function sanitizeTerminalColor(value) {
+  const color = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "";
+}
+
 function normalizeWorkspaceColor(value, fallback = "") {
   const color = String(value || "").trim();
   if (!color) return "";
@@ -764,6 +769,9 @@ class CmuxWindowsRuntime {
               titleLocked: Boolean(panel.titleLocked),
               color: panel.color || "",
               backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
+              terminalBackground: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalBackground) : "",
+              terminalForeground: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalForeground) : "",
+              terminalCursorColor: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalCursorColor) : "",
               cwd: sanitizeDirectoryPath(panel.cwd || workspace.cwd),
               shellProfile: panel.type === "terminal" ? sanitizeShellProfile(panel.shellProfile) : "",
               shellPath: panel.type === "terminal" ? sanitizeShellPath(panel.shellPath) : "",
@@ -820,6 +828,9 @@ class CmuxWindowsRuntime {
           titleLocked: Boolean(panel.titleLocked),
           color: panel.color || "",
           backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
+          terminalBackground: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalBackground) : "",
+          terminalForeground: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalForeground) : "",
+          terminalCursorColor: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalCursorColor) : "",
           cwd: panel.cwd,
           shellProfile: panel.type === "terminal" ? sanitizeShellProfile(panel.shellProfile) : "",
           shellPath: panel.type === "terminal" ? sanitizeShellPath(panel.shellPath) : "",
@@ -834,7 +845,10 @@ class CmuxWindowsRuntime {
   newWorkspace(title, options = {}) {
     const workspaceId = id("workspace");
     const cwd = sanitizeDirectoryPath(options.cwd);
-    const panel = this.newPanel("terminal", workspaceId, { cwd });
+    const panel = this.newPanel("terminal", workspaceId, {
+      cwd,
+      backgroundImage: options.backgroundImage
+    });
     return {
       id: workspaceId,
       title: workspaceTitle(title),
@@ -863,6 +877,9 @@ class CmuxWindowsRuntime {
       titleLocked: Boolean(explicitTitle || options.titleLocked),
       color: isSafeColorValue(options.color) ? options.color : "",
       backgroundImage: type === "terminal" ? sanitizeBackgroundImageValue(options.backgroundImage) : "",
+      terminalBackground: type === "terminal" ? sanitizeTerminalColor(options.terminalBackground) : "",
+      terminalForeground: type === "terminal" ? sanitizeTerminalColor(options.terminalForeground) : "",
+      terminalCursorColor: type === "terminal" ? sanitizeTerminalColor(options.terminalCursorColor) : "",
       cwd: sanitizeDirectoryPath(options.cwd),
       shellProfile: type === "terminal" ? sanitizeShellProfile(options.shellProfile) : "",
       shellPath: type === "terminal" ? sanitizeShellPath(options.shellPath) : "",
@@ -930,6 +947,9 @@ class CmuxWindowsRuntime {
       titleLocked: Boolean(panel.titleLocked),
       color: panel.color || "",
       backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
+      terminalBackground: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalBackground) : "",
+      terminalForeground: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalForeground) : "",
+      terminalCursorColor: panel.type === "terminal" ? sanitizeTerminalColor(panel.terminalCursorColor) : "",
       cwd: panel.cwd,
       cwdShort: shortPath(panel.cwd),
       shellProfile: panel.shellProfile || "",
@@ -1024,7 +1044,10 @@ class CmuxWindowsRuntime {
     const explicitTitle = workspaceTitle(options.title, "");
     const generatedTitleBase = hasRequestedCwd ? path.basename(cwd) : "Workspace";
     const title = explicitTitle || this.generatedWorkspaceTitle(generatedTitleBase || "Workspace");
-    const workspace = this.newWorkspace(title, { cwd });
+    const workspace = this.newWorkspace(title, {
+      cwd,
+      backgroundImage: options.backgroundImage
+    });
     workspace.activePanelId = workspace.panels[0]?.id || null;
     this.state.workspaces.push(workspace);
     this.state.activeWorkspaceId = workspace.id;
@@ -1119,6 +1142,11 @@ class CmuxWindowsRuntime {
     }
     if (Object.hasOwn(updates, "backgroundImage") && found.panel.type === "terminal") {
       found.panel.backgroundImage = sanitizeBackgroundImageValue(updates.backgroundImage);
+    }
+    if (found.panel.type === "terminal") {
+      for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"]) {
+        if (Object.hasOwn(updates, key)) found.panel[key] = sanitizeTerminalColor(updates[key]);
+      }
     }
     if (updates.direction === "down" || updates.direction === "right") {
       found.workspace.splitDirection = updates.direction;

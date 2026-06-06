@@ -2,8 +2,8 @@ import { clampPaneLayoutPercent } from "./layout-utils.js";
 
 export const paneTreeLayoutsStorageKey = "cmux.paneTreeLayouts";
 
-const paneTreeRatioMin = 0.01;
-const paneTreeRatioMax = 0.99;
+const paneTreeRatioMin = 0.12;
+const paneTreeRatioMax = 0.88;
 
 function createPaneSplitId() {
   return `split_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;

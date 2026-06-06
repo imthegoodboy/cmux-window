@@ -171,6 +171,7 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   assert(!rendererHtml.includes('id="newBrowserButton"'), "renderer shell should keep the browser launcher out of the titlebar");
 
   const rendererApp = await fetchText(`${info.url}app.js`, "renderer app");
+  const rendererScrollUtils = fs.readFileSync(path.join(__dirname, "..", "renderer", "scroll-utils.js"), "utf8");
   assert(rendererApp.includes("Use everywhere"), "active background panel should expose a use-everywhere action");
   assert(
     /cycleTemplate\.dataset\.backgroundAction = "cycle-template";[\s\S]*active background image cycle template choose paste save copy open/.test(rendererApp),
@@ -188,8 +189,102 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   assert(rendererApp.includes("getNewSurfaceTabs(workspace)"), "surface tab strip should keep terminal and browser add controls");
   assert(rendererApp.includes('className: "surface-new-terminal"'), "surface tab strip should expose a terminal add control");
   assert(rendererApp.includes('className: "surface-new-browser"'), "surface tab strip should expose a browser add control");
+  assert(rendererApp.includes("function createBrowserPanel(direction = newPaneDirection(), options = {})"), "browser pane creation should use a shared placement helper");
+  assert(
+    rendererApp.includes('contextMenuButton("Browser right"')
+      && rendererApp.includes('contextMenuButton("Browser below"')
+      && rendererApp.includes("showBrowserPanePlacementMenu"),
+    "browser panes should expose explicit right/below placement controls"
+  );
+  assert(
+    rendererApp.includes("normalizeTerminalPasteText")
+      && rendererApp.includes("replace(/(?:\\r\\n|\\r|\\n)+$/u, \"\")"),
+    "terminal paste should strip accidental trailing blank enters"
+  );
+  assert(
+    rendererApp.includes("attachHorizontalWheelScroll(tabList)")
+      && rendererScrollUtils.includes("event.deltaMode === WheelEvent.DOM_DELTA_LINE")
+      && rendererScrollUtils.includes("event.stopPropagation()")
+      && rendererScrollUtils.includes("element.scrollLeft = next"),
+    "crowded command, workspace, and browser tab strips should wheel-scroll smoothly without parent scroll bleed"
+  );
+  assert(
+    rendererApp.includes("function shouldConfirmTerminalPaste")
+      && rendererApp.includes("terminalConfirmMultilinePaste")
+      && rendererApp.includes('"Paste multiple lines?"')
+      && rendererApp.includes('"Confirm multiline paste"'),
+    "terminal paste should confirm multi-line clipboard input while keeping normal paste fast"
+  );
+  assert(
+    rendererApp.includes("async function renameBrowserTab")
+      && rendererApp.includes('contextMenuButton("Rename tab"')
+      && rendererApp.includes('event.key === "F2"'),
+    "browser tabs should support custom rename from context menu and keyboard"
+  );
+  assert(
+    rendererApp.includes("function openBrowserTabAsPane")
+      && rendererApp.includes('contextMenuButton("Open tab right"')
+      && rendererApp.includes('contextMenuButton("Open tab below"'),
+    "browser tabs should open directly into right/below panes"
+  );
+  assert(
+    rendererApp.includes("async function moveBrowserTabAsPane")
+      && rendererApp.includes('contextMenuButton("Move tab right"')
+      && rendererApp.includes('contextMenuButton("Move tab below"')
+      && rendererApp.includes("closeBrowserTab(session, tabId, { focus: false })"),
+    "browser tabs should move directly into right/below panes without stealing focus back"
+  );
+  assert(
+    rendererApp.includes("function transferBrowserTabToSession")
+      && rendererApp.includes("state.browserTabDragSource")
+      && rendererApp.includes('event.dataTransfer.setData("application/x-cmux-browser-tab"')
+      && rendererApp.includes("transferBrowserTabToSession(source, session, targetTabId, placement)")
+      && rendererApp.includes("transferBrowserTabToSession(source, session)"),
+    "browser tabs should drag between browser panes, not only reorder inside one pane"
+  );
+  assert(
+    /function clearAllDropTargets\(\) \{[\s\S]*?clearBrowserTabDragSource\(\);/.test(rendererApp),
+    "global drag cleanup should clear stale browser tab drag state"
+  );
+  assert(
+    rendererApp.includes('button.addEventListener("dblclick"')
+      && rendererApp.includes("double-click or F2 to rename"),
+    "browser tabs should support double-click rename like pane tabs"
+  );
+  assert(
+    rendererApp.includes("browserFullscreenMode")
+      && rendererApp.includes('view.addEventListener("enter-html-full-screen"'),
+    "browser fullscreen requests should be handled by the pane fullscreen setting"
+  );
+  assert(
+    rendererApp.includes("function updateInspectorCloseButtonLabel")
+      && rendererApp.includes('"Close settings"'),
+    "settings inspector should expose a clear close action label"
+  );
+  assert(
+    rendererApp.includes("previousSettingsSnapshot")
+      && rendererApp.includes("function restorePreviousSettings")
+      && rendererApp.includes("skipUndo: true")
+      && rendererApp.includes("Restore previous settings")
+      && rendererApp.includes('id: "settings.restorePrevious"'),
+    "settings customization should support one-step restore after profile, preset, and theme changes"
+  );
+  assert(
+    rendererApp.includes('id: "quick.restoreSettings"')
+      && rendererApp.includes('label: "Undo settings"')
+      && rendererApp.includes("previousSettingsSnapshotLabel()")
+      && rendererApp.includes("hasPreviousSettingsSnapshot()"),
+    "settings restore should appear as a temporary palette quick action after changes"
+  );
   assert(rendererApp.includes("maybeApplyReadableBrowserPaneLayout"), "browser panes should be promoted out of unreadable split slots");
   assert(rendererApp.includes("browserReadableLayoutMinHeightRatio"), "browser pane layout should guard against short half-rendered slots");
+  assert(
+    rendererApp.includes("function browserPaneDomLooksUnreadable")
+      && rendererApp.includes("shellRect.height < bodyRect.height * 0.82")
+      && rendererApp.includes("return browserPaneDomLooksUnreadable(panelId);")
+      && rendererApp.includes('{ render: false, autoLayout: false }'),
+    "browser panes should stay manually resizable while the DOM guard only repairs real browser view sizing failures"
+  );
   assert(rendererApp.includes("rect.width > 0 ? rect.width"), "browser view bounds should use the visible pane rect before client fallback");
   assert(
     /setPaneSplitterPercent[\s\S]*scheduleVisibleBrowserViewBoundsSync\(browserViewBoundsSyncFrames\);[\s\S]*scheduleLayoutSettingsRefresh/.test(rendererApp),
@@ -203,19 +298,93 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   assert(rendererApp.includes("scheduleReadableBrowserPaneDomGuard(workspace)"), "rendered browser panes should be checked for unreadable DOM sizes");
   assert(rendererApp.includes("browserCompactChromeMigrationStorageKey"), "full browser chrome should migrate to the cleaner compact default");
   assert(rendererApp.includes("state.performanceGuardSlowRenderCount += value >= renderVerySlowFrameMs ? 2 : 1"), "performance guard should require repeated slow render evidence");
-  assert(rendererApp.includes("crowdedPaneAutoLayoutPanelThreshold = 5"), "crowded pane auto layout should stay enabled");
+  assert(rendererApp.includes("crowdedPaneAutoLayoutPanelThreshold = 3"), "crowded pane auto layout should stay enabled for three-pane slivers");
   assert(rendererApp.includes("migrateCrowdedPaneTree(workspace, tree)"), "existing crowded pane trees should be migrated");
   assert(rendererApp.includes("maybeApplyCrowdedPaneAutoLayout(workspace.id, createdPanel?.id"), "new pane creation should apply crowded-pane auto layout");
   assert(
-    /state\.settings\.terminalCursorColor \|\| "",\s*paneBackground\s*\]\.join\("\|"\)/.test(rendererApp),
-    "terminal theme signature should include the actual pane background value"
+    rendererApp.includes("function terminalPanelColorOverrides")
+      && rendererApp.includes("overrides.terminalBackground")
+      && /overrides\.terminalCursorColor,\s*paneBackground\s*\]\.join\("\|"\)/.test(rendererApp),
+    "terminal theme signature should include pane background and pane color override values"
   );
+  assert(
+    rendererApp.includes("applyTerminalColorPresetToActivePane")
+      && rendererApp.includes("terminalPanelsWithColorOverrides")
+      && rendererApp.includes("clearTerminalColorOverridesForUpdates")
+      && rendererApp.includes("async function applyTerminalSetupUpdates")
+      && rendererApp.includes("async function resetTerminalSetupSettings")
+      && rendererApp.includes("async function applySettingsPreset")
+      && rendererApp.includes("async function applySavedSettingsProfile")
+      && rendererApp.includes("async function applyLookSettingsUpdates")
+      && rendererApp.includes("async function applyLookPack")
+      && rendererApp.includes("async function resetAppearanceSettings")
+      && rendererApp.includes("terminalSetupSettingsAreDefault()")
+      && rendererApp.includes("terminalColorOverridesMaskSettings")
+      && rendererApp.includes("terminal colors applied to all terminals + new")
+      && rendererApp.includes('data-terminal-color-pane'),
+    "terminal color presets, setup actions, and settings profiles should support focused-pane overrides and all-terminal default cleanup"
+  );
+  assert(
+    rendererApp.includes("attachCustomKeyEventHandler")
+      && rendererApp.includes("handleTerminalCustomKeyEvent")
+      && rendererApp.includes("isPlainTerminalCopyShortcut")
+      && rendererApp.includes("isPlainTerminalPasteShortcut")
+      && rendererApp.includes("terminalSelectionText(panel)")
+      && rendererApp.includes("isTerminalAppShortcutEvent")
+      && /replace\(\s*\/\(\?:\\r\\n\|\\r\|\\n\)\+\$\/u\s*,\s*""\s*\)/.test(rendererApp),
+    "terminal copy/paste shortcuts should support Windows-style Ctrl+C/V without leaking app shortcuts to the shell"
+  );
+  assert(
+    rendererApp.includes('menu.style.maxHeight = `${maxHeight}px`;')
+      && rendererApp.includes("const openUp = bottomSpace < height && topSpace > bottomSpace"),
+    "context menus should size and flip inside the viewport"
+  );
+  assert(
+    rendererApp.includes('"terminalBackgroundImage",\r\n  "terminalBackground"')
+      || rendererApp.includes('"terminalBackgroundImage",\n  "terminalBackground"'),
+    "new terminal background default should be part of terminal preview refresh state"
+  );
+  const rendererConfig = fs.readFileSync(path.join(__dirname, "..", "renderer", "config.js"), "utf8");
+  const rendererBrowserTabs = fs.readFileSync(path.join(__dirname, "..", "renderer", "browser-tabs.js"), "utf8");
+  const serverApp = fs.readFileSync(path.join(__dirname, "server.cjs"), "utf8");
+  assert(
+    serverApp.includes("function sanitizeTerminalColor")
+      && serverApp.includes("terminalBackground: panel.type === \"terminal\" ? sanitizeTerminalColor(panel.terminalBackground)")
+      && serverApp.includes("terminalCursorColor: type === \"terminal\" ? sanitizeTerminalColor(options.terminalCursorColor)")
+      && serverApp.includes('for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"])'),
+    "server should persist per-pane terminal color overrides"
+  );
+  assert(
+    rendererBrowserTabs.includes("titleLocked")
+      && rendererApp.includes("if (tab.titleLocked) return;")
+      && rendererApp.includes("titleLocked: Boolean(tab.titleLocked)"),
+    "custom browser tab titles should persist and not be overwritten by page titles"
+  );
+  assert(
+    rendererConfig.includes('"terminalBackgroundImage",\r\n  "terminalBackground"')
+      || rendererConfig.includes('"terminalBackgroundImage",\n  "terminalBackground"'),
+    "new terminal background default should be part of terminal appearance refresh state"
+  );
+  assert(rendererConfig.includes("terminalConfirmMultilinePaste: true"), "multi-line terminal paste confirmation should be enabled by default");
 
   const rendererCss = await fetchText(`${info.url}styles.css`, "renderer styles");
   assert(rendererCss.includes("grid-template-rows: minmax(0, 1fr);"), "root shell should define a single full-height grid row");
   assert(rendererCss.includes(".shell > *:not(.window-resize-edge)"), "resize handles should not be converted into shell grid items");
   assert(rendererCss.includes("max-height: 100%;"), "browser view should be clamped to its pane height");
+  assert(rendererCss.includes("overflow-x: hidden;"), "context menus should not grow sideways when scrollable");
   assert(rendererCss.includes("grid-template-columns: 14px minmax(0, 1fr);"), "settings page tabs should show icon and label at readable widths");
+  assert(
+    rendererCss.includes(".inspector-head .icon-button")
+      && rendererCss.includes("order: -1;"),
+    "settings inspector close button should remain visible at the start of the header"
+  );
+  assert(rendererCss.includes("@container (max-width: 560px)"), "quick settings actions should stack before labels clip");
+  assert(
+    rendererCss.includes("content-visibility: auto;")
+      && rendererCss.includes(".settings-react-host.is-searching ~ .settings-section")
+      && rendererApp.includes("setSettingsScrollLayoutNeeded"),
+    "settings sections should skip offscreen layout while preserving search and scroll-target measurement"
+  );
   assert(!rendererCss.includes("#newTerminalButton"), "renderer styles should not target a removed titlebar terminal launcher");
   assert(!rendererCss.includes("#newBrowserButton"), "renderer styles should not target a removed titlebar browser launcher");
   assert(

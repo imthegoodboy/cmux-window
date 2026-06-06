@@ -4,6 +4,7 @@ import { formatMessage, t } from "../../i18n.js";
 const labelKeys = {
   searchPlaceholder: "settings.searchPlaceholder",
   clearSearch: "settings.clearSearch",
+  closeSearch: "settings.closeSearch",
   searchHint: "settings.searchHint",
   pageLabel: "settings.pageLabel",
   pageAriaLabel: "settings.pageAriaLabel",
@@ -15,6 +16,7 @@ function localizedShellLabels() {
   return {
     searchPlaceholder: t(labelKeys.searchPlaceholder),
     clearSearch: t(labelKeys.clearSearch),
+    closeSearch: t(labelKeys.closeSearch),
     searchHint: t(labelKeys.searchHint),
     pageLabel: t(labelKeys.pageLabel),
     pageAriaLabel: t(labelKeys.pageAriaLabel),
@@ -28,6 +30,7 @@ function mergeShellLabels(labels) {
   return {
     searchPlaceholder: labels?.searchPlaceholder || localizedLabels.searchPlaceholder,
     clearSearch: labels?.clearSearch || localizedLabels.clearSearch,
+    closeSearch: labels?.closeSearch || localizedLabels.closeSearch,
     searchHint: labels?.searchHint || localizedLabels.searchHint,
     pageLabel: labels?.pageLabel || localizedLabels.pageLabel,
     pageAriaLabel: labels?.pageAriaLabel || localizedLabels.pageAriaLabel,
@@ -152,6 +155,7 @@ export function SettingsShell({
   const searchWasClearedRef = useRef(false);
   const tabsRef = useRef(null);
   const [draftQuery, setDraftQuery] = useState(query || "");
+  const [searchFocused, setSearchFocused] = useState(false);
 
   useEffect(() => {
     if (focusSearchOnMount) searchInputRef.current?.focus({ preventScroll: true });
@@ -174,6 +178,7 @@ export function SettingsShell({
   }, [activeCategory]);
 
   const onTabsWheel = (event) => {
+    if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth + 1) return;
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
     event.currentTarget.scrollLeft += event.deltaY;
     event.preventDefault();
@@ -213,14 +218,18 @@ export function SettingsShell({
   };
 
   const clearSearch = () => {
-    if (!draftQuery) return;
-    searchWasClearedRef.current = true;
-    setDraftQuery("");
-    onClear();
+    if (draftQuery) {
+      searchWasClearedRef.current = true;
+      setDraftQuery("");
+      onClear();
+      return;
+    }
+    searchInputRef.current?.blur();
+    setSearchFocused(false);
   };
 
   const onSearchKeyDown = (event) => {
-    if (event.key !== "Escape" || !draftQuery) return;
+    if (event.key !== "Escape" || (!draftQuery && !searchFocused)) return;
     event.preventDefault();
     event.stopPropagation();
     clearSearch();
@@ -228,10 +237,11 @@ export function SettingsShell({
 
   const tabTitleTemplate = safeLabels.tabTitle;
   const feedbackText = searchFeedback || safeLabels.searchHint;
+  const searchActionLabel = draftQuery ? safeLabels.clearSearch : safeLabels.closeSearch;
 
   return (
     <div className="settings-react-shell" data-react-settings="true">
-      <div className={`settings-search${draftQuery ? " has-query" : ""}`}>
+      <div className={`settings-search${draftQuery ? " has-query" : ""}${searchFocused ? " is-focused" : ""}`}>
         <input
           aria-label={safeLabels.searchPlaceholder}
           className="setting-control settings-search-input"
@@ -240,14 +250,15 @@ export function SettingsShell({
           ref={searchInputRef}
           value={draftQuery}
           onChange={(event) => changeSearch(event.target.value)}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
           onKeyDown={onSearchKeyDown}
         />
         <button
-          aria-label={safeLabels.clearSearch}
+          aria-label={searchActionLabel}
           className="settings-search-clear"
           type="button"
-          disabled={!draftQuery}
-          title={safeLabels.clearSearch}
+          title={searchActionLabel}
           onClick={clearSearch}
         >
           <CloseIcon />

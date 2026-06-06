@@ -11,6 +11,7 @@ import {
   backgroundPresets,
   backgroundReadabilityOptions,
   browserChromeOptions,
+  browserFullscreenOptions,
   browserHomePresets,
   browserLaunchModeOptions,
   browserZoomOptions,
@@ -403,6 +404,7 @@ const appearancePreviewKeys = new Set([
   "interfaceContrast",
   "interfaceDepth",
   "terminalFontFamily",
+  "terminalBackgroundImage",
   "terminalBackground",
   "terminalForeground",
   "terminalCursorColor"
@@ -425,8 +427,10 @@ const terminalSettingsPreviewKeys = new Set([
   "terminalScrollback",
   "terminalStartupMode",
   "terminalPauseInactiveOutput",
+  "terminalConfirmMultilinePaste",
   "terminalCursorStyle",
   "terminalCursorBlink",
+  "terminalBackgroundImage",
   "terminalBackground",
   "terminalForeground",
   "terminalCursorColor"
@@ -499,7 +503,8 @@ const browserSettingsPreviewKeys = new Set([
   "externalBrowserProfileId",
   "browserSuspendInactive",
   "browserChromeMode",
-  "browserZoom"
+  "browserZoom",
+  "browserFullscreenMode"
 ]);
 const settingsInspectorSettingKeys = {
   appearance: [
@@ -529,7 +534,8 @@ const settingsInspectorSettingKeys = {
     "externalBrowserProfileId",
     "browserSuspendInactive",
     "browserChromeMode",
-    "browserZoom"
+    "browserZoom",
+    "browserFullscreenMode"
   ],
   layout: [
     "density",
@@ -633,6 +639,7 @@ const settingsInspectorSettingKeys = {
     "terminalStartupMode",
     "terminalCursorStyle",
     "terminalCursorBlink",
+    "terminalConfirmMultilinePaste",
     "terminalBackground",
     "terminalForeground",
     "terminalCursorColor",
@@ -654,7 +661,8 @@ const profileSettingsSettingKeys = [...new Set([
   "externalBrowserProfileId",
   "browserSuspendInactive",
   "browserChromeMode",
-  "browserZoom"
+  "browserZoom",
+  "terminalConfirmMultilinePaste"
 ])];
 const quickSettingsSettingKeys = [
   ...new Set([
@@ -663,6 +671,7 @@ const quickSettingsSettingKeys = [
     "browserHomeUrl",
     "terminalProfile",
     "terminalCustomShell",
+    "terminalConfirmMultilinePaste",
     "browserLaunchMode",
     "externalBrowserProfileId",
     "browserSuspendInactive",
@@ -730,14 +739,14 @@ const newBrowserPaneRightRatio = 0.6;
 const browserReadableLayoutMinWidthRatio = 0.58;
 const browserReadableLayoutMinHeightRatio = 0.42;
 const browserReadableLayoutActivePercent = 68;
-const crowdedPaneAutoLayoutPanelThreshold = 5;
+const crowdedPaneAutoLayoutPanelThreshold = 3;
 const visibleBackgroundOpacity = 24;
 const terminalCursorMigrationStorageKey = "cmux.terminalCursorBarMigration";
 const browserHomeMigrationStorageKey = "cmux.browserHomeGoogleMigration";
 const browserReadableChromeMigrationStorageKey = "cmux.browserReadableChromeMigration";
 const browserCompactChromeMigrationStorageKey = "cmux.browserCompactChromeMigration";
 const browserPaneReadableSplitMigrationStoragePrefix = "cmux.browserPaneReadableSplitMigration.";
-const crowdedPaneAutoLayoutMigrationStoragePrefix = "cmux.crowdedPaneAutoLayoutMigration.";
+const crowdedPaneAutoLayoutMigrationStoragePrefix = "cmux.crowdedPaneAutoLayoutMigration.v3.";
 const sidebarBranchMigrationStorageKey = "cmux.sidebarBranchQuietMigration";
 const addTabHiddenMigrationStorageKey = "cmux.addTabHiddenMigration";
 const addTabVisibleMigrationStorageKey = "cmux.addTabVisibleMigration";
@@ -1191,6 +1200,7 @@ const state = {
   commandStripResizeObserver: null,
   dragPanelId: null,
   dragWorkspaceId: null,
+  browserTabDragSource: null,
   workspaceDropTargetId: "",
   workspaceDropTargetMode: "",
   zoomedPanelId: null,
@@ -1206,6 +1216,7 @@ const state = {
   contextMenu: null,
   activeDialog: null,
   uiOperations: new Map(),
+  previousSettingsSnapshot: null,
   operationChromeTimer: 0,
   pendingFocusSync: null,
   focusSyncTimer: 0,
@@ -1321,6 +1332,7 @@ const state = {
   performanceGuardStartedAt: performance.now(),
   performanceGuardSlowRenderCount: 0,
   terminalWheelZoomState: new Map(),
+  browserWheelZoomState: new Map(),
   appliedSettingsSignature: "",
   settings: initialSettings,
   settingsCategory: "quick",
@@ -1370,6 +1382,7 @@ const elements = {
   inspectorTitle: document.getElementById("inspectorTitle"),
   inspectorSubtitle: document.getElementById("inspectorSubtitle"),
   inspectorBody: document.getElementById("inspectorBody"),
+  closeInspector: document.getElementById("closeInspectorButton"),
   statusSummary: document.getElementById("statusSummary"),
   statusPipe: document.getElementById("statusPipe"),
   statusPty: document.getElementById("statusPty"),
@@ -1378,6 +1391,7 @@ const elements = {
   palette: document.getElementById("palette"),
   paletteInput: document.getElementById("paletteInput"),
   paletteList: document.getElementById("paletteList"),
+  paletteClose: document.getElementById("paletteCloseButton"),
   workspaceSwitchHud: document.getElementById("workspaceSwitchHud"),
   paneSwitchHud: document.getElementById("paneSwitchHud"),
   toastRegion: document.getElementById("toastRegion"),
@@ -1390,6 +1404,10 @@ elements.paneLayoutStyle.id = "paneLayoutStyle";
 document.head.appendChild(elements.paneLayoutStyle);
 elements.paletteInput.placeholder = t("palette.placeholder");
 elements.paletteInput.setAttribute("aria-label", t("palette.searchLabel"));
+if (elements.paletteClose) {
+  elements.paletteClose.title = t("palette.close");
+  elements.paletteClose.setAttribute("aria-label", t("palette.close"));
+}
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || min));
@@ -1517,7 +1535,33 @@ function uniqueColors(colors = []) {
 
 function normalizeTerminalColor(value) {
   const color = String(value || "").trim();
-  return isSafeCustomColor(color) ? color : "";
+  return isSafeCustomColor(color) ? color.toLowerCase() : "";
+}
+
+function terminalPanelColorOverrides(panel = null) {
+  if (panel?.type !== "terminal") {
+    return {
+      terminalBackground: "",
+      terminalForeground: "",
+      terminalCursorColor: ""
+    };
+  }
+  return {
+    terminalBackground: normalizeTerminalColor(panel.terminalBackground),
+    terminalForeground: normalizeTerminalColor(panel.terminalForeground),
+    terminalCursorColor: normalizeTerminalColor(panel.terminalCursorColor)
+  };
+}
+
+function terminalPaneColorSummary(source = {}) {
+  const background = normalizeTerminalColor(source.terminalBackground);
+  const foreground = normalizeTerminalColor(source.terminalForeground);
+  const cursor = normalizeTerminalColor(source.terminalCursorColor);
+  const parts = [];
+  if (background) parts.push(`bg ${background}`);
+  if (foreground) parts.push(`text ${foreground}`);
+  if (cursor) parts.push(`cursor ${cursor}`);
+  return parts.length ? parts.join(" / ") : "Default colors";
 }
 
 function normalizeSettings(input = {}, legacyFontSize = 0) {
@@ -1592,7 +1636,9 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   if (!terminalFontOptions.some(([id]) => id === next.terminalFontFamily)) next.terminalFontFamily = defaultSettings.terminalFontFamily;
   if (!terminalProfiles.some(([id]) => id === next.terminalProfile)) next.terminalProfile = defaultSettings.terminalProfile;
   if (!terminalStartupOptions.some(([id]) => id === next.terminalStartupMode)) next.terminalStartupMode = defaultSettings.terminalStartupMode;
+  next.terminalConfirmMultilinePaste = next.terminalConfirmMultilinePaste !== false;
   next.backgroundImage = normalizeBackgroundValue(next.backgroundImage);
+  next.terminalBackgroundImage = normalizeBackgroundValue(next.terminalBackgroundImage);
   next.browserHomeUrl = normalizeUrl(next.browserHomeUrl || defaultSettings.browserHomeUrl, defaultSettings.browserHomeUrl);
   if (!browserLaunchModeOptions.some(([id]) => id === next.browserLaunchMode)) next.browserLaunchMode = defaultSettings.browserLaunchMode;
   next.externalBrowserProfileId = String(next.externalBrowserProfileId || defaultSettings.externalBrowserProfileId).trim().slice(0, 120) || "system";
@@ -1600,6 +1646,7 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   if (!browserChromeOptions.some(([id]) => id === next.browserChromeMode)) next.browserChromeMode = defaultSettings.browserChromeMode;
   next.browserZoom = String(next.browserZoom || defaultSettings.browserZoom);
   if (!browserZoomOptions.some(([id]) => id === next.browserZoom)) next.browserZoom = defaultSettings.browserZoom;
+  if (!browserFullscreenOptions.some(([id]) => id === next.browserFullscreenMode)) next.browserFullscreenMode = defaultSettings.browserFullscreenMode;
   next.terminalCustomShell = String(next.terminalCustomShell || "").trim().slice(0, 512);
   next.showTabs = next.showTabs !== false;
   next.showStatusbar = next.showStatusbar !== false;
@@ -3927,20 +3974,26 @@ function terminalColorControlPanel({
   field,
   label,
   fallbackColor,
-  searchTerms
+  searchTerms,
+  activeColor = state.settings[settingKey],
+  onPick = (color) => updateSettings({ [settingKey]: color }),
+  onClear = () => updateSettings({ [settingKey]: "" }),
+  clearDisabled = !activeColor,
+  clearTitle = "",
+  targetMeta = activeColor ? "Custom override" : "Default terminal color"
 }) {
-  const activeColor = state.settings[settingKey];
   return colorControlPanel({
     colors: terminalColorPalette(field, activeColor),
     activeColor,
     fallbackColor,
-    onPick: (color) => updateSettings({ [settingKey]: color }),
-    onClear: () => updateSettings({ [settingKey]: "" }),
+    onPick,
+    onClear,
     clearLabel: "Default",
-    clearDisabled: !activeColor,
+    clearDisabled,
+    clearTitle,
     saveLabel: "Save",
     targetLabel: label,
-    targetMeta: activeColor ? "Custom override" : "Default terminal color",
+    targetMeta,
     searchTerms
   });
 }
@@ -4074,11 +4127,15 @@ function normalizeBlueprintPanel(panel = {}) {
   const color = normalizeBlueprintColor(panel.color);
   const shellProfile = terminalProfiles.some(([id]) => id === panel.shellProfile) ? panel.shellProfile : defaultSettings.terminalProfile;
   const backgroundImage = type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "";
+  const colorOverrides = terminalPanelColorOverrides(panel);
   return {
     type,
     title,
     color,
     backgroundImage,
+    terminalBackground: colorOverrides.terminalBackground,
+    terminalForeground: colorOverrides.terminalForeground,
+    terminalCursorColor: colorOverrides.terminalCursorColor,
     cwd: String(panel.cwd || "").trim().slice(0, 512),
     shellProfile,
     shellPath: String(panel.shellPath || "").trim().slice(0, 512),
@@ -4844,6 +4901,7 @@ function canSaveBackgroundImage(value) {
 function currentBackgroundSetSources(workspace = activeWorkspace()) {
   return uniqueColors([
     state.settings.backgroundImage,
+    terminalDefaultBackgroundImage(),
     ...workspaceTerminalPanels(workspace).map((panel) => panel.backgroundImage)
   ].map(normalizedSavedBackgroundValue).filter(Boolean));
 }
@@ -5608,10 +5666,6 @@ async function applyPanelBackgroundImage(value, panel = focusedPanel(), options 
 
 async function applyWorkspaceBackgroundImageToTerminals(value, workspace = activeWorkspace(), options = {}) {
   const terminals = (workspace?.panels || []).filter((panel) => panel.type === "terminal");
-  if (terminals.length === 0) {
-    if (options.toast !== false) toast("Open a terminal pane first.");
-    return false;
-  }
   const raw = String(value || "").trim();
   let backgroundImage = "";
   if (raw) {
@@ -5628,21 +5682,28 @@ async function applyWorkspaceBackgroundImageToTerminals(value, workspace = activ
     }
   }
   const normalized = normalizeBackgroundValue(backgroundImage);
+  const defaultChanged = updateSettings({ terminalBackgroundImage: normalized }, { immediate: true });
   const changedPanels = terminals.filter((panel) => normalizeBackgroundValue(panel.backgroundImage) !== normalized);
-  if (changedPanels.length === 0) {
+  if (changedPanels.length === 0 && !defaultChanged) {
     if (options.toast !== false) {
-      toast(normalized ? "Terminal pane backgrounds already match." : "Terminal pane backgrounds are already clear.");
+      toast(normalized ? "Terminal backgrounds and new terminal default already match." : "Terminal backgrounds are already clear.");
     }
     return false;
   }
-  await updatePanels(changedPanels.map((panel) => ({
-    panelId: panel.id,
-    updates: { backgroundImage: normalized }
-  })));
+  if (changedPanels.length > 0) {
+    await updatePanels(changedPanels.map((panel) => ({
+      panelId: panel.id,
+      updates: { backgroundImage: normalized }
+    })));
+  }
   refreshBackgroundApplicationSettings(options);
   if (options.toast !== false) {
-    const action = normalized ? "updated" : "cleared";
-    toast(`${changedPanels.length} terminal pane${changedPanels.length === 1 ? "" : "s"} ${action}.`);
+    if (changedPanels.length > 0) {
+      const action = normalized ? "updated" : "cleared";
+      toast(`${changedPanels.length} terminal pane${changedPanels.length === 1 ? "" : "s"} ${action}; new terminals will match.`);
+    } else {
+      toast(normalized ? "New terminal background default updated." : "New terminal background default cleared.");
+    }
   }
   return true;
 }
@@ -5669,9 +5730,9 @@ function backgroundApplyTargetOptions(workspace = activeWorkspace()) {
     },
     {
       id: "all",
-      label: "All terminals",
-      meta: paneCount ? `${paneCount} pane${paneCount === 1 ? "" : "s"}` : "open a terminal",
-      disabled: paneCount === 0
+      label: "All terminals + new",
+      meta: paneCount ? `${paneCount} pane${paneCount === 1 ? "" : "s"} + future` : "future terminals",
+      disabled: false
     }
   ];
 }
@@ -5699,6 +5760,7 @@ function backgroundCommandPaletteSignature() {
   appendSignatureValue(parts, state.backgroundApplyTarget);
   appendSignatureValue(parts, appBackground);
   appendSignatureValue(parts, terminalBackground);
+  appendSignatureValue(parts, terminalDefaultBackgroundImage());
   appendSignatureValue(parts, terminalCount);
   appendSignatureValue(parts, terminalBackgroundsMatch(workspace, ""));
   appendSignatureValue(parts, Boolean(appBackground && terminalBackgroundsMatch(workspace, appBackground)));
@@ -5731,20 +5793,15 @@ function backgroundCommandPaletteState(commandId, workspace = activeWorkspace())
   const terminalLabel = terminal ? panelDisplayTitle(terminal, true) : "Select a terminal";
   const terminalMeta = terminal ? terminalLabel : "No terminal";
   const allChoose = workspaceTerminalBackgroundActionModel("choose", workspace, {
-    availableTitle: "Choose one background image for every terminal pane.",
-    noTerminalTitle: "Open a terminal pane before setting terminal backgrounds."
+    availableTitle: "Choose one background image for terminal panes and new terminals."
   });
   const allPaste = workspaceTerminalBackgroundActionModel("paste", workspace, {
-    availableTitle: "Paste one background image for every terminal pane.",
-    noTerminalTitle: "Open a terminal pane before pasting terminal backgrounds."
+    availableTitle: "Paste one background image for terminal panes and new terminals."
   });
-  const allUseApp = workspaceTerminalBackgroundActionModel("useApp", workspace, {
-    noTerminalTitle: "Open a terminal pane before applying the app background."
-  });
+  const allUseApp = workspaceTerminalBackgroundActionModel("useApp", workspace);
   const allClear = workspaceTerminalBackgroundActionModel("clear", workspace, {
-    availableTitle: "Clear every terminal pane background.",
-    emptyTitle: "Terminal backgrounds are already clear.",
-    noTerminalTitle: "Open a terminal pane before clearing terminal backgrounds."
+    availableTitle: "Clear terminal pane backgrounds and the new-terminal default.",
+    emptyTitle: "Terminal backgrounds and new-terminal default are already clear."
   });
   const base = {
     meta: "Background",
@@ -6553,6 +6610,14 @@ function backgroundSetupPayload(target = state.backgroundApplyTarget) {
   };
 }
 
+function backgroundSettingUpdateFromValue(raw) {
+  if (raw === null) return "";
+  if (typeof raw !== "string") return null;
+  const trimmed = stripWrappingQuotes(raw);
+  const normalized = normalizeBackgroundValue(raw);
+  return trimmed && !normalized ? null : normalized;
+}
+
 async function copyBackgroundSetup(target = state.backgroundApplyTarget) {
   const scope = normalizeBackgroundApplyTarget(target);
   const targetOption = backgroundApplyTargetOption(scope);
@@ -6783,7 +6848,7 @@ function activeBackgroundUseAsAppModel(target = state.backgroundApplyTarget, wor
   const model = activeBackgroundPanelViewModel(scope, workspace);
   const background = normalizeBackgroundValue(model.background);
   const appBackground = normalizeBackgroundValue(state.settings.backgroundImage);
-  const sourceLabel = scope === "all" ? "shared terminal background" : "pane background";
+  const sourceLabel = scope === "all" ? "terminal background/default" : "pane background";
   if (scope === "app") {
     return {
       active: false,
@@ -6802,7 +6867,7 @@ function activeBackgroundUseAsAppModel(target = state.backgroundApplyTarget, wor
     return {
       active: false,
       disabled: true,
-      title: "Terminal backgrounds are mixed. Choose one shared terminal background first."
+      title: "Terminal panes and the new-terminal default are mixed. Choose one shared terminal background first."
     };
   }
   if (!background) {
@@ -6810,7 +6875,7 @@ function activeBackgroundUseAsAppModel(target = state.backgroundApplyTarget, wor
       active: false,
       disabled: true,
       title: scope === "all"
-        ? "Set one shared terminal background first."
+        ? "Set one shared terminal background or new-terminal default first."
         : "Choose a pane background before using it for the app."
     };
   }
@@ -6862,13 +6927,13 @@ async function applyPaneBackgroundToApp(panel = activeTerminalPanelForSettings()
 
 async function applyWorkspaceTerminalBackgroundToApp(workspace = activeWorkspace(), options = {}) {
   const model = workspaceTerminalBackgroundState(workspace);
-  if (!model.hasTerminalPanes) {
-    if (options.toast !== false) toast("Open a terminal pane first.");
+  const background = model.effectiveBackground;
+  if (!background) {
+    if (options.toast !== false) toast("Set one shared terminal background or new-terminal default first.");
     return false;
   }
-  const background = model.sharedBackground;
-  if (!background) {
-    if (options.toast !== false) toast("Set one shared terminal background first.");
+  if (model.mixedBackgrounds) {
+    if (options.toast !== false) toast("Terminal panes and the new-terminal default are mixed.");
     return false;
   }
   if (model.useAsAppActive) {
@@ -6909,10 +6974,9 @@ async function applySavedBackgroundImageToWorkspaceTerminals(backgroundId, works
   return applyWorkspaceBackgroundImageToTerminals(background.url, workspace, { render: options.render, toast: false }).then((changed) => {
     if (options.toast === false) return changed;
     if (changed === true) {
-      toast(`${background.label} applied to terminal panes.`);
+      toast(`${background.label} applied to terminal panes and new terminals.`);
     } else if (changed === false) {
-      const terminals = (workspace?.panels || []).filter((panel) => panel.type === "terminal");
-      toast(terminals.length ? "Terminal pane backgrounds already match." : "Open a terminal pane first.");
+      toast("Terminal backgrounds and new-terminal default already match.");
     }
     return changed;
   });
@@ -7189,6 +7253,7 @@ function settingsRenderSignature(settings = state.settings) {
     settings.terminalSmoothResumedOutput,
     settings.terminalCursorStyle,
     settings.terminalCursorBlink,
+    settings.terminalBackgroundImage,
     settings.terminalBackground,
     settings.terminalForeground,
     settings.terminalCursorColor,
@@ -7392,6 +7457,13 @@ function updateSettings(updates, options = {}) {
   });
   const changedKeys = Object.keys(updates).filter((key) => previous[key] !== nextSettings[key]);
   if (changedKeys.length === 0) return false;
+  if (!options.skipUndo) {
+    state.previousSettingsSnapshot = {
+      settings: normalizeSettings(previous),
+      changedKeys,
+      createdAt: Date.now()
+    };
+  }
   state.settings = nextSettings;
   state.terminalFontSize = state.settings.terminalFontSize;
   bumpPaletteEntriesCacheRevision();
@@ -7469,6 +7541,48 @@ function updateSettings(updates, options = {}) {
   if (!changedKeys.includes("browserSuspendInactive") && previous.titleDetailMode !== state.settings.titleDetailMode) {
     scheduleRender();
   }
+  return true;
+}
+
+function hasPreviousSettingsSnapshot() {
+  return Boolean(state.previousSettingsSnapshot?.settings);
+}
+
+function settingsChangeCountLabel(keys = []) {
+  const count = new Set(keys).size;
+  return `${count || 0} setting${count === 1 ? "" : "s"}`;
+}
+
+function previousSettingsSnapshotLabel(snapshot = state.previousSettingsSnapshot) {
+  if (!snapshot?.settings) return "No previous settings";
+  return `Previous / ${settingsChangeCountLabel(snapshot.changedKeys)}`;
+}
+
+function previousSettingsRestoreTitle() {
+  return hasPreviousSettingsSnapshot()
+    ? `Restore the previous setup changed by the last settings action (${settingsChangeCountLabel(state.previousSettingsSnapshot.changedKeys)}).`
+    : "No previous settings change is available yet.";
+}
+
+function restorePreviousSettings(options = {}) {
+  const snapshot = state.previousSettingsSnapshot;
+  if (!snapshot?.settings) {
+    toast("No previous settings change to restore.");
+    return false;
+  }
+  const currentSettings = normalizeSettings(state.settings);
+  state.previousSettingsSnapshot = {
+    settings: currentSettings,
+    changedKeys: Object.keys(snapshot.settings).filter((key) => currentSettings[key] !== snapshot.settings[key]),
+    createdAt: Date.now()
+  };
+  const changed = updateSettings(snapshot.settings, { immediate: true, skipUndo: true });
+  if (!changed) {
+    toast("Previous settings are already active.");
+    return false;
+  }
+  refreshSettingsAfterGlobalStateChange(options);
+  toast("Previous settings restored.");
   return true;
 }
 
@@ -7594,6 +7708,9 @@ function crowdedPaneAutoLayoutVisiblePanels(workspace) {
 function crowdedPaneAutoLayoutTree(workspace, activePanelId = workspace?.activePanelId) {
   const visiblePanels = crowdedPaneAutoLayoutVisiblePanels(workspace);
   if (!workspace || visiblePanels.length < crowdedPaneAutoLayoutPanelThreshold) return null;
+  if (visiblePanels.length >= 4) {
+    return buildGridPanePresetTree(visiblePanels.map((panel) => panel.id));
+  }
   const active = visiblePanels.find((panel) => panel.id === activePanelId)
     || visiblePanels.find((panel) => panel.id === workspace.activePanelId)
     || visiblePanels[visiblePanels.length - 1];
@@ -7626,7 +7743,7 @@ function paneTreeHasCrowdedSlivers(tree, workspace) {
   const ratios = paneTreeLeafSizeRatios(tree);
   return visiblePanels.some((panel) => {
     const size = ratios.get(panel.id);
-    return Boolean(size && (size.width < 0.08 || size.height < 0.08));
+    return Boolean(size && (size.width <= 0.12 || size.height <= 0.12));
   });
 }
 
@@ -7731,14 +7848,33 @@ function browserPaneActualLayoutRatios(panelId) {
   };
 }
 
+function browserPaneDomLooksUnreadable(panelId) {
+  const pane = state.paneCache.get(panelId)
+    || elements.paneGrid?.querySelector?.(`.pane[data-panel-id="${paneIdSelector(panelId)}"]`);
+  if (!pane?.isConnected) return false;
+  const body = pane.querySelector(".pane-body");
+  const shell = pane.querySelector(".browser-shell");
+  const content = pane.querySelector(".browser-content");
+  const view = pane.querySelector(".browser-view");
+  if (!body || !shell || !content || !view) return false;
+  const bodyRect = body.getBoundingClientRect();
+  const shellRect = shell.getBoundingClientRect();
+  const contentRect = content.getBoundingClientRect();
+  const viewRect = view.getBoundingClientRect();
+  if (bodyRect.width <= 0 || bodyRect.height <= 0 || shellRect.width <= 0 || shellRect.height <= 0) return false;
+  const tallEnoughToJudge = bodyRect.height >= 180;
+  const wideEnoughToJudge = bodyRect.width >= 260;
+  const shellTooShort = tallEnoughToJudge && shellRect.height < bodyRect.height * 0.82;
+  const shellTooNarrow = wideEnoughToJudge && shellRect.width < bodyRect.width * 0.82;
+  const viewTooShort = contentRect.height >= 120 && viewRect.height > 0 && viewRect.height < contentRect.height * 0.82;
+  const viewTooNarrow = contentRect.width >= 180 && viewRect.width > 0 && viewRect.width < contentRect.width * 0.82;
+  return shellTooShort || shellTooNarrow || viewTooShort || viewTooNarrow;
+}
+
 function activeBrowserPaneNeedsReadableDomLayout(workspace, panelId) {
   const active = workspace?.panels?.find((panel) => panel.id === panelId);
   if (!active || active.type !== "browser" || zoomedPanelIdForWorkspace(workspace)) return false;
-  const ratios = browserPaneActualLayoutRatios(panelId);
-  return Boolean(ratios && (
-    ratios.width < browserReadableLayoutMinWidthRatio
-    || ratios.height < browserReadableLayoutMinHeightRatio
-  ));
+  return browserPaneDomLooksUnreadable(panelId);
 }
 
 function scheduleReadableBrowserPaneDomGuard(workspace) {
@@ -8080,11 +8216,13 @@ function persistPaneLayoutFromGrid(direction) {
 
 function terminalTheme(panel = null) {
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim() || "#72a4ff";
+  const overrides = terminalPanelColorOverrides(panel);
   const hasPaneBackground = Boolean(panel?.type === "terminal" && normalizeBackgroundValue(panel.backgroundImage));
-  const background = hasPaneBackground ? "rgba(0, 0, 0, 0)" : state.settings.terminalBackground || terminalColorDefaults.background;
-  const paletteBackground = state.settings.terminalBackground || terminalColorDefaults.background;
-  const foreground = state.settings.terminalForeground || terminalColorDefaults.foreground;
-  const cursor = state.settings.terminalCursorColor || accent;
+  const backgroundColor = overrides.terminalBackground || state.settings.terminalBackground || terminalColorDefaults.background;
+  const foreground = overrides.terminalForeground || state.settings.terminalForeground || terminalColorDefaults.foreground;
+  const cursor = overrides.terminalCursorColor || state.settings.terminalCursorColor || accent;
+  const background = hasPaneBackground ? "rgba(0, 0, 0, 0)" : backgroundColor;
+  const paletteBackground = backgroundColor;
   return {
     background,
     foreground,
@@ -8112,12 +8250,16 @@ function terminalTheme(panel = null) {
 
 function terminalThemeSignature(panel = null) {
   const paneBackground = panel?.type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "";
+  const overrides = terminalPanelColorOverrides(panel);
   return [
     state.settings.theme,
     state.settings.accent,
     state.settings.terminalBackground || terminalColorDefaults.background,
     state.settings.terminalForeground || terminalColorDefaults.foreground,
     state.settings.terminalCursorColor || "",
+    overrides.terminalBackground,
+    overrides.terminalForeground,
+    overrides.terminalCursorColor,
     paneBackground
   ].join("|");
 }
@@ -8279,6 +8421,8 @@ const commands = [
   { id: "terminal.pasteRecentCommands", label: "Paste Recent Commands", shortcut: "", run: () => pasteRecentCommands() },
   { id: "browser.new", label: "Open Browser", shortcut: "Ctrl+Shift+L", run: () => openBrowserHome() },
   { id: "browser.newPane", label: "Open Browser Pane", shortcut: "", run: () => openBrowserHome(activeWorkspace()?.id, { mode: "pane" }) },
+  { id: "browser.newPaneRight", label: "Open Browser Right", shortcut: "", run: () => openBrowserHome(activeWorkspace()?.id, { mode: "pane", direction: "right" }) },
+  { id: "browser.newPaneDown", label: "Open Browser Below", shortcut: "", run: () => openBrowserHome(activeWorkspace()?.id, { mode: "pane", direction: "down" }) },
   { id: "browser.homeExternal", label: "Open Browser Home Externally", shortcut: "", run: () => openExternalBrowser(state.settings.browserHomeUrl) },
   { id: "browser.copySetup", label: "Copy Browser Setup", shortcut: "", run: () => copyBrowserSetup() },
   { id: "browser.pasteSetup", label: "Paste Browser Setup", shortcut: "", run: () => pasteBrowserSetup() },
@@ -8370,6 +8514,7 @@ const commands = [
   { id: "settings.pasteCommandSnippet", label: "Paste Command Snippet", shortcut: "", run: () => pasteCommandSnippet() },
   { id: "settings.profiles", label: "Open Settings Profiles", shortcut: "", run: () => openSettingsCategory("profiles") },
   { id: "settings.saveProfile", label: "Save Current Settings Profile", shortcut: "", run: () => saveCurrentSettingsProfile() },
+  { id: "settings.restorePrevious", label: "Restore Previous Settings", shortcut: "", run: () => restorePreviousSettings() },
   { id: "settings.copyCurrentProfile", label: "Copy Current Settings Profile", shortcut: "", run: () => copyCurrentSettingsProfile() },
   { id: "settings.pasteProfile", label: "Paste Settings Profile", shortcut: "", run: () => pasteSettingsProfile() },
   { id: "settings.clearRecentActivity", label: "Clear Recent Activity", shortcut: "", run: () => clearRecentActivity() },
@@ -8406,10 +8551,10 @@ const commands = [
   { id: "background.chooseActiveTerminal", label: "Choose Active Terminal Background", shortcut: "", run: () => chooseBackgroundImageForTarget({ target: "pane" }) },
   { id: "background.pasteActiveTerminal", label: "Paste Active Terminal Background", shortcut: "", run: () => pasteBackgroundImageFromClipboard({ target: "pane" }) },
   { id: "background.clearActiveTerminal", label: "Clear Active Terminal Background", shortcut: "", run: () => applyBackgroundValueToTarget("", "pane", { toast: true }) },
-  { id: "background.chooseAllTerminals", label: "Choose All Terminal Backgrounds", shortcut: "", run: () => chooseWorkspaceTerminalBackground() },
-  { id: "background.pasteAllTerminals", label: "Paste All Terminal Backgrounds", shortcut: "", run: () => pasteWorkspaceTerminalBackgroundFromClipboard() },
-  { id: "background.useAppForAllTerminals", label: "Use App Background For All Terminals", shortcut: "", run: () => useAppBackgroundForWorkspaceTerminals() },
-  { id: "background.clearAllTerminals", label: "Clear All Terminal Backgrounds", shortcut: "", run: () => clearWorkspaceTerminalBackgrounds() },
+  { id: "background.chooseAllTerminals", label: "Choose Terminal Backgrounds + New", shortcut: "", run: () => chooseWorkspaceTerminalBackground() },
+  { id: "background.pasteAllTerminals", label: "Paste Terminal Backgrounds + New", shortcut: "", run: () => pasteWorkspaceTerminalBackgroundFromClipboard() },
+  { id: "background.useAppForAllTerminals", label: "Use App Background For Terminals + New", shortcut: "", run: () => useAppBackgroundForWorkspaceTerminals() },
+  { id: "background.clearAllTerminals", label: "Clear Terminal Backgrounds + New", shortcut: "", run: () => clearWorkspaceTerminalBackgrounds() },
   { id: "settings.saveBrowserProfile", label: "Save Browser Profile", shortcut: "", run: () => saveCurrentBrowserProfile() },
   { id: "sidebar.toggle", label: "Toggle Sidebar", shortcut: "Ctrl+B", run: () => toggleSidebar() }
 ];
@@ -8875,6 +9020,17 @@ function customizationCommandPaletteState(commandId) {
       search: normalizeSettingsQuery(`terminal command snippet paste import clipboard json saved custom shell ${full ? "limit full " : ""}${countLabel}`)
     };
   }
+  if (commandId === "settings.restorePrevious") {
+    const available = hasPreviousSettingsSnapshot();
+    return {
+      meta: previousSettingsSnapshotLabel(),
+      shortcut: "Undo",
+      disabled: !available,
+      icon: "profiles",
+      title: previousSettingsRestoreTitle(),
+      search: normalizeSettingsQuery(`settings profile setup undo restore previous revert last change customization theme background layout terminal browser performance ${available ? "ready " : "unavailable "}${previousSettingsSnapshotLabel()}`)
+    };
+  }
   if (commandId === "settings.saveProfile" || commandId === "settings.copyCurrentProfile" || commandId === "settings.pasteProfile" || commandId === "settings.saveLayoutProfile" || commandId === "settings.saveTerminalProfile") {
     const setup = activeSettingsSetupModel();
     const setupSummary = settingsProfileSummary(state.settings);
@@ -9156,8 +9312,8 @@ function customizationCommandPaletteState(commandId) {
       isDefault: colorsDefault,
       meta,
       icon: "terminal",
-      defaultTitle: "Terminal colors already match the cmux default.",
-      resetTitle: "Reset background, text, and cursor colors to the cmux default.",
+      defaultTitle: "Terminal colors already match the cmux default for all terminals.",
+      resetTitle: "Reset background, text, and cursor colors to the cmux default for all terminals.",
       search: `terminal color colors reset defaults background foreground text cursor cmux ${meta}`
     });
   }
@@ -9173,8 +9329,8 @@ function customizationCommandPaletteState(commandId) {
       icon: "profiles",
       title: profilesFull
         ? settingsProfileLimitTitle()
-        : "Save the current browser home page, launch mode, external profile, suspend setting, pane chrome, and pane zoom.",
-      search: normalizeSettingsQuery(`browser save profile reusable settings home page launch external profile chrome edge brave suspend inactive pane chrome tabs address controls full compact content zoom scale ${profilesFull ? "limit full " : ""}${summary.home} ${summary.launch} ${summary.profile} ${summary.inactivePanes} ${summary.chrome} ${summary.zoom} ${profileCount}`)
+        : "Save the current browser home page, launch mode, external profile, suspend setting, pane chrome, pane zoom, and fullscreen behavior.",
+      search: normalizeSettingsQuery(`browser save profile reusable settings home page launch external profile chrome edge brave suspend inactive pane chrome tabs address controls full compact content zoom scale fullscreen video ${profilesFull ? "limit full " : ""}${summary.home} ${summary.launch} ${summary.profile} ${summary.inactivePanes} ${summary.chrome} ${summary.zoom} ${summary.fullscreen} ${profileCount}`)
     };
   }
   if (commandId === "settings.resetCommandPalette") {
@@ -9474,6 +9630,8 @@ const corePaletteCommandIds = new Set([
   "terminal.fontReset",
   "browser.new",
   "browser.newPane",
+  "browser.newPaneRight",
+  "browser.newPaneDown",
   "browser.homeExternal",
   "browser.copySetup",
   "browser.pasteSetup",
@@ -9535,6 +9693,9 @@ function coreCommandPaletteSignature() {
   appendSignatureValue(parts, paneSetupResetIsDefault(panel));
   appendSignatureValue(parts, panel?.color || "");
   appendSignatureValue(parts, panel?.type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "");
+  appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalColor(panel.terminalBackground) : "");
+  appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalColor(panel.terminalForeground) : "");
+  appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalColor(panel.terminalCursorColor) : "");
   appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalFontSize(panel.terminalFontSize, 0) : 0);
   appendSignatureValue(parts, paneLookSyncTargetPanels(panel, workspace).length);
   const paneLookSave = paneLookSaveModel(panel);
@@ -9763,13 +9924,24 @@ function coreCommandPaletteState(commandId, workspace = activeWorkspace()) {
       search: normalizeSettingsQuery(`browser home open ${launchExternal ? "external system" : "pane workspace"} launch mode ${state.settings.browserLaunchMode} ${homeHost} ${home} ${externalProfile} ${workspaceTitle} ${paneCreationQueueStatusLabel()}`)
     };
   }
-  if (commandId === "browser.newPane") {
+  if (commandId === "browser.newPane" || commandId === "browser.newPaneRight" || commandId === "browser.newPaneDown") {
+    const directionLabel = commandId === "browser.newPaneRight"
+      ? "right"
+      : commandId === "browser.newPaneDown"
+        ? "below"
+        : "new pane";
     return {
       meta: hostnameOf(state.settings.browserHomeUrl) || workspaceTitle,
       disabled: !hasWorkspace || queueFull,
       icon: "browserPlus",
-      title: !hasWorkspace ? noWorkspaceTitle : creationTitle("Open the browser home page in a new pane."),
-      search: `browser new pane web home add workspace ${workspaceTitle} ${state.settings.browserHomeUrl}`
+      title: !hasWorkspace
+        ? noWorkspaceTitle
+        : commandId === "browser.newPaneRight"
+          ? creationTitle("Open the browser home page to the right.")
+          : commandId === "browser.newPaneDown"
+            ? creationTitle("Open the browser home page below.")
+            : creationTitle("Open the browser home page in a new pane."),
+      search: `browser new pane web home add workspace right below split placement ${directionLabel} ${workspaceTitle} ${state.settings.browserHomeUrl}`
     };
   }
   if (commandId === "browser.cycleHomePreset") {
@@ -9791,7 +9963,7 @@ function coreCommandPaletteState(commandId, workspace = activeWorkspace()) {
       disabled: model.disabled,
       icon: "browserPlus",
       title: model.title,
-      search: normalizeSettingsQuery(`browser pane view chrome zoom cycle next preset full compact content dense readable ${model.search}`)
+      search: normalizeSettingsQuery(`browser pane view chrome zoom fullscreen video cycle next preset full compact content dense readable ${model.search}`)
     };
   }
   if (commandId === "browser.cycleWorkflowPreset") {
@@ -9802,7 +9974,7 @@ function coreCommandPaletteState(commandId, workspace = activeWorkspace()) {
       disabled: model.disabled,
       icon: "browserPlus",
       title: model.title,
-      search: normalizeSettingsQuery(`browser workflow setup cycle next preset home launch external profile suspend pane chrome tabs address controls full compact content zoom scale localhost local dev app api backend ${model.search}`)
+      search: normalizeSettingsQuery(`browser workflow setup cycle next preset home launch external profile suspend pane chrome tabs address controls full compact content zoom scale fullscreen video localhost local dev app api backend ${model.search}`)
     };
   }
   if (["browser.copySetup", "browser.pasteSetup", "browser.resetSetup"].includes(commandId)) {
@@ -9821,11 +9993,11 @@ function coreCommandPaletteState(commandId, workspace = activeWorkspace()) {
       title: isReset
         ? setupDefault
           ? "Browser setup already uses defaults."
-          : "Reset browser home, launch mode, external profile, inactive-pane suspension, pane chrome, and zoom to defaults."
+          : "Reset browser home, launch mode, external profile, inactive-pane suspension, pane chrome, zoom, and fullscreen behavior to defaults."
         : isPaste
           ? "Apply copied cmux browser setup."
-          : "Copy browser home, launch mode, external profile, suspend setting, pane chrome, and pane zoom as JSON.",
-      search: normalizeSettingsQuery(`browser setup ${isPaste ? "paste import" : isReset ? "reset default" : "copy export"} home launch external profile suspend inactive pane chrome tabs address controls full compact content zoom scale clipboard json ${setupDefault ? "active current " : ""}${summary.home} ${summary.launch} ${summary.profile} ${summary.inactivePanes} ${summary.chrome} ${summary.zoom}`)
+          : "Copy browser home, launch mode, external profile, suspend setting, pane chrome, pane zoom, and fullscreen behavior as JSON.",
+      search: normalizeSettingsQuery(`browser setup ${isPaste ? "paste import" : isReset ? "reset default" : "copy export"} home launch external profile suspend inactive pane chrome tabs address controls full compact content zoom scale fullscreen video clipboard json ${setupDefault ? "active current " : ""}${summary.home} ${summary.launch} ${summary.profile} ${summary.inactivePanes} ${summary.chrome} ${summary.zoom} ${summary.fullscreen}`)
     };
   }
   if (["browser.copyTabs", "browser.copyAllTabs", "browser.pasteTabs", "browser.newTab", "browser.focusAddress", "browser.reload", "browser.openExternal", "browser.copyUrl", "browser.activeHome", "browser.saveActiveProfile"].includes(commandId)) {
@@ -10259,7 +10431,7 @@ const actionWorkflowDefinitions = [
     id: "browserReview",
     label: "Browser review",
     body: "Open a browser pane, jump to the address bar, then externalize or save the active page.",
-    commandIds: ["browser.newPane", "browser.focusAddress", "browser.openExternal", "browser.saveActiveProfile"]
+    commandIds: ["browser.newPaneRight", "browser.newPaneDown", "browser.focusAddress", "browser.saveActiveProfile"]
   },
   {
     id: "terminalTools",
@@ -10695,6 +10867,9 @@ function appendPanelSignature(parts, panel = {}) {
   appendSignatureValue(parts, Boolean(panel.titleLocked));
   appendSignatureValue(parts, panel.color || "");
   appendSignatureValue(parts, panel.backgroundImage || "");
+  appendSignatureValue(parts, panel.terminalBackground || "");
+  appendSignatureValue(parts, panel.terminalForeground || "");
+  appendSignatureValue(parts, panel.terminalCursorColor || "");
   appendSignatureValue(parts, panel.cwd);
   appendSignatureValue(parts, panel.cwdShort);
   appendSignatureValue(parts, panel.branch || "");
@@ -12263,6 +12438,10 @@ function createTerminalPanel(direction = newPaneDirection(), options = {}) {
   return createPanel("terminal", newPaneDirection(direction), { immediateTerminalInit: true, ...options });
 }
 
+function createBrowserPanel(direction = newPaneDirection(), options = {}) {
+  return createPanel("browser", newPaneDirection(direction), options);
+}
+
 function createSurfaceAddPane(kind, workspace, direction = newPaneDirection()) {
   if (!workspace || paneCreationButtonsDisabled()) return;
   const placement = newPaneDirection(direction);
@@ -12505,6 +12684,9 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.titleLocked || false);
     appendSignatureValue(nextParts, panel.color || "");
     appendSignatureValue(nextParts, panel.backgroundImage || "");
+    appendSignatureValue(nextParts, panel.terminalBackground || "");
+    appendSignatureValue(nextParts, panel.terminalForeground || "");
+    appendSignatureValue(nextParts, panel.terminalCursorColor || "");
     appendSignatureValue(nextParts, panel.cwd || "");
     appendSignatureValue(nextParts, panel.cwdShort || "");
     appendSignatureValue(nextParts, panel.url || "");
@@ -12666,7 +12848,7 @@ function updatePaneChromeState(pane, panel, workspace) {
   if (!pane || !panel) return;
   const parts = paneParts(pane);
   setStylePropertyIfChanged(pane, "--panel-color", panel.color || workspace?.color || "var(--color-accent)");
-  setStylePropertyIfChanged(pane, "--pane-terminal-background", state.settings.terminalBackground || terminalColorDefaults.background);
+  setStylePropertyIfChanged(pane, "--pane-terminal-background", effectiveTerminalColorsForPanel(panel).background);
   const paneBackgroundImage = panel.type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "";
   toggleClassIfChanged(pane, "has-pane-background", Boolean(paneBackgroundImage));
   setStylePropertyIfChanged(pane, "--pane-background-image", backgroundCss(paneBackgroundImage));
@@ -12994,6 +13176,7 @@ async function createEmptyWorkspacePanel(type, workspace) {
     url: type === "browser" ? state.settings.browserHomeUrl : undefined
   };
   if (type === "terminal") return createTerminalPanel(newPaneDirection(), options);
+  if (type === "browser") return createBrowserPanel(newPaneDirection(), options);
   return createPanel(type, newPaneDirection(), options);
 }
 
@@ -13831,6 +14014,7 @@ function clearPaneDropTarget(pane) {
 }
 
 function clearAllDropTargets() {
+  clearBrowserTabDragSource();
   clearPaneGridDropTarget();
   clearSurfaceTabDropTargets();
   for (const session of state.browserViews.values()) clearBrowserTabDropTargets(session);
@@ -13892,6 +14076,7 @@ function cleanupPanel(panelId) {
   if (browserSession?.tabScrollFrame) cancelAnimationFrame(browserSession.tabScrollFrame);
   if (browserSession?.tabScrollStateFrame) cancelAnimationFrame(browserSession.tabScrollStateFrame);
   if (browserSession?.tabOverflowFrame) cancelAnimationFrame(browserSession.tabOverflowFrame);
+  browserSession?.clearBrowserFullscreenStatus?.();
   browserSession?.browserViewResizeObserver?.disconnect?.();
   browserSession?.tabResizeObserver?.disconnect?.();
   browserSession?.detachTabWheelScroll?.();
@@ -14169,6 +14354,7 @@ function ensureTerminal(panel, body) {
   term.loadAddon(fitAddon);
   term.loadAddon(webLinksAddon);
   if (searchAddon) term.loadAddon(searchAddon);
+  term.attachCustomKeyEventHandler?.((event) => handleTerminalCustomKeyEvent(event, panel));
   term.open(host);
 
   const terminalUrl = new URL(`/terminal/${panel.id}`, location.origin.replace(/^http/, "ws"));
@@ -14687,6 +14873,27 @@ function browserZoomLabel(value = state.settings.browserZoom) {
   return optionLabel(browserZoomOptions, id, `${id}%`);
 }
 
+function browserZoomOptionIds() {
+  return browserZoomOptions.map(([id]) => id);
+}
+
+function browserZoomDeltaValue(delta = 0, value = state.settings.browserZoom) {
+  const ids = browserZoomOptionIds();
+  const current = browserZoomValue(value);
+  const index = Math.max(0, ids.indexOf(current));
+  const nextIndex = clamp(index + Number(delta || 0), 0, ids.length - 1);
+  return ids[nextIndex] || defaultSettings.browserZoom;
+}
+
+function browserWheelZoomStateFor(panelId) {
+  let zoomState = state.browserWheelZoomState.get(panelId);
+  if (!zoomState) {
+    zoomState = { at: 0, remainder: 0 };
+    state.browserWheelZoomState.set(panelId, zoomState);
+  }
+  return zoomState;
+}
+
 function browserChromeModeValue(value = state.settings.browserChromeMode) {
   const id = String(value || defaultSettings.browserChromeMode);
   return browserChromeOptions.some(([optionId]) => optionId === id) ? id : defaultSettings.browserChromeMode;
@@ -14695,6 +14902,16 @@ function browserChromeModeValue(value = state.settings.browserChromeMode) {
 function browserChromeModeLabel(value = state.settings.browserChromeMode) {
   const id = browserChromeModeValue(value);
   return optionLabel(browserChromeOptions, id, "Full");
+}
+
+function browserFullscreenModeValue(value = state.settings.browserFullscreenMode) {
+  const id = String(value || defaultSettings.browserFullscreenMode);
+  return browserFullscreenOptions.some(([optionId]) => optionId === id) ? id : defaultSettings.browserFullscreenMode;
+}
+
+function browserFullscreenModeLabel(value = state.settings.browserFullscreenMode) {
+  const id = browserFullscreenModeValue(value);
+  return optionLabel(browserFullscreenOptions, id, "Stay in pane");
 }
 
 function applyBrowserChromeModeToShell(shell, value = state.settings.browserChromeMode) {
@@ -14792,6 +15009,37 @@ function applyBrowserZoomToSessions() {
   for (const session of state.browserViews.values()) lockBrowserViewZoom(session.view, { force: true });
 }
 
+function showBrowserZoomStatus(panelId, label = browserZoomLabel()) {
+  const session = state.browserViews.get(panelId);
+  if (!session?.setStatus) return;
+  const message = `Zoom ${label}`;
+  if (session.browserZoomStatusTimer) clearTimeout(session.browserZoomStatusTimer);
+  session.setStatus(message);
+  session.browserZoomStatusTimer = setTimeout(() => {
+    session.browserZoomStatusTimer = 0;
+    if (session.statusText === message) session.setStatus("");
+  }, 700);
+}
+
+function changeBrowserZoom(deltaOrKind, options = {}) {
+  const browserPanel = resolveBrowserPanel(options.panel || activePaneActionTarget() || focusedPanel());
+  if (browserPanel) markInteractedPanel(browserPanel.id);
+  const current = browserZoomValue();
+  const next = deltaOrKind === "reset"
+    ? defaultSettings.browserZoom
+    : browserZoomDeltaValue(deltaOrKind, current);
+  const label = browserZoomLabel(next);
+  if (next === current) {
+    if (options.status && browserPanel) showBrowserZoomStatus(browserPanel.id, label);
+    if (options.toast !== false) toast(`Browser zoom already ${label}.`);
+    return false;
+  }
+  updateSettings({ browserZoom: next });
+  if (options.status && browserPanel) showBrowserZoomStatus(browserPanel.id, label);
+  if (options.toast !== false) toast(`Browser zoom ${label}.`);
+  return true;
+}
+
 function applyBrowserWheelZoomGuard(event, panel) {
   const browserPanel = resolveBrowserPanel(panel);
   if (!browserPanel || !event.ctrlKey) return false;
@@ -14799,8 +15047,30 @@ function applyBrowserWheelZoomGuard(event, panel) {
   event.stopPropagation();
   event.stopImmediatePropagation?.();
   markInteractedPanel(browserPanel.id);
-  const session = state.browserViews.get(browserPanel.id);
-  if (session?.view) lockBrowserViewZoom(session.view, { force: true });
+  const delta = normalizedWheelZoomDelta(event);
+  if (!Number.isFinite(delta) || delta === 0) {
+    const session = state.browserViews.get(browserPanel.id);
+    if (session?.view) lockBrowserViewZoom(session.view, { force: true });
+    return true;
+  }
+  const now = performance.now();
+  const zoomState = browserWheelZoomStateFor(browserPanel.id);
+  if (now - zoomState.at > terminalWheelZoomIdleResetMs) {
+    zoomState.remainder = 0;
+  }
+  zoomState.at = now;
+  if (zoomState.remainder && Math.sign(zoomState.remainder) !== Math.sign(delta)) {
+    zoomState.remainder = 0;
+  }
+  zoomState.remainder += delta;
+  const steps = Math.min(
+    terminalWheelZoomMaxSteps,
+    Math.trunc(Math.abs(zoomState.remainder) / terminalWheelZoomThreshold)
+  );
+  if (!steps) return true;
+  const direction = zoomState.remainder < 0 ? 1 : -1;
+  zoomState.remainder -= Math.sign(zoomState.remainder) * terminalWheelZoomThreshold * steps;
+  changeBrowserZoom(direction * steps, { panel: browserPanel, toast: false, status: true });
   return true;
 }
 
@@ -14934,7 +15204,7 @@ function saveActiveBrowserPageProfile(panel = focusedPanel(), options = {}) {
 
 function newBrowserTabFromPanel(panel = focusedPanel()) {
   const browserPanel = resolveBrowserPanel(panel);
-  if (!browserPanel) return createPanel("browser", newPaneDirection(), { url: state.settings.browserHomeUrl });
+  if (!browserPanel) return createBrowserPanel(newPaneDirection(), { url: state.settings.browserHomeUrl });
   const session = state.browserViews.get(browserPanel.id);
   if (session) {
     focusPanel(browserPanel.id);
@@ -15240,6 +15510,7 @@ function browserTabsSignature(session, tabLabels = browserTabLabels(session)) {
     appendSignatureValue(nextParts, tab.id);
     appendSignatureValue(nextParts, tab.url || "");
     appendSignatureValue(nextParts, tab.title || "");
+    appendSignatureValue(nextParts, Boolean(tab.titleLocked));
     appendSignatureValue(nextParts, tabLabels.get(tab.id) || browserTabBaseLabel(tab));
   });
   return parts.join("");
@@ -15252,6 +15523,7 @@ function browserTabsLayoutSignature(session, tabLabels = browserTabLabels(sessio
     appendSignatureValue(nextParts, tab.id);
     appendSignatureValue(nextParts, tab.url || "");
     appendSignatureValue(nextParts, tab.title || "");
+    appendSignatureValue(nextParts, Boolean(tab.titleLocked));
     appendSignatureValue(nextParts, tabLabels.get(tab.id) || browserTabBaseLabel(tab));
   });
   return parts.join("");
@@ -15383,6 +15655,11 @@ function createBrowserTabButton(session) {
   });
   button.append(icon, label, close);
   button.addEventListener("click", () => activateBrowserTab(session, button.dataset.browserTabId));
+  button.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    renameBrowserTab(session, button.dataset.browserTabId);
+  });
   button.addEventListener("mousedown", (event) => {
     if (event.button === 1) event.preventDefault();
   });
@@ -15398,15 +15675,15 @@ function createBrowserTabButton(session) {
   button.addEventListener("contextmenu", (event) => showBrowserTabContextMenu(event, session, button.dataset.browserTabId));
   button.addEventListener("dragstart", (event) => {
     const tabId = button.dataset.browserTabId;
-    session.dragBrowserTabId = tabId;
+    setBrowserTabDragSource(session, tabId, event);
     button.classList.add("is-dragging");
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", tabId);
   });
   button.addEventListener("dragover", (event) => {
     const targetTabId = button.dataset.browserTabId;
-    if (!session.dragBrowserTabId || session.dragBrowserTabId === targetTabId) return;
+    const source = browserTabDragSource(event);
+    if (!canDropBrowserTabIntoSession(source, session) || (source.panelId === session.panelId && source.tabId === targetTabId)) return;
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     setBrowserTabDropTarget(session, button, browserTabDropPlacement(event, button));
   });
   button.addEventListener("dragleave", () => {
@@ -15415,13 +15692,19 @@ function createBrowserTabButton(session) {
   button.addEventListener("drop", (event) => {
     event.preventDefault();
     const placement = browserTabDropPlacement(event, button);
-    const draggedTabId = session.dragBrowserTabId;
+    const source = browserTabDragSource(event);
     const targetTabId = button.dataset.browserTabId;
     clearBrowserTabDropTarget(session, button);
-    if (draggedTabId && draggedTabId !== targetTabId) moveBrowserTab(session, draggedTabId, targetTabId, placement);
+    if (!source) return;
+    if (source.panelId === session.panelId) {
+      if (source.tabId !== targetTabId) moveBrowserTab(session, source.tabId, targetTabId, placement);
+    } else {
+      transferBrowserTabToSession(source, session, targetTabId, placement);
+    }
+    clearBrowserTabDragSource(session);
   });
   button.addEventListener("dragend", () => {
-    session.dragBrowserTabId = "";
+    clearBrowserTabDragSource(session);
     button.classList.remove("is-dragging");
     clearBrowserTabDropTargets(session);
   });
@@ -15459,6 +15742,12 @@ function handleBrowserTabKeydown(session, event, tabId) {
     event.preventDefault();
     event.stopPropagation();
     closeBrowserTab(session, tabId);
+    return;
+  }
+  if (event.key === "F2") {
+    event.preventDefault();
+    event.stopPropagation();
+    renameBrowserTab(session, tabId);
     return;
   }
   const nextTabId = browserTabKeyboardTargetId(session, tabId, event.key);
@@ -15515,8 +15804,9 @@ function updateBrowserTabButton(session, button, tab, label = browserTabLabel(se
   changed = setDatasetIfChanged(button, "tabIndex", String(ordinal)) || changed;
   changed = setAttributeIfChanged(button, "role", "tab") || changed;
   changed = updateBrowserTabSelectionState(button, active) || changed;
-  changed = setTitleIfChanged(button, `${label}${label !== fullTitle ? ` - ${fullTitle}` : ""} - ${tab.url}`) || changed;
-  const ariaLabel = `${label}. ${tab.url}. ${closeLabel} with Delete.`;
+  const customTitle = tab.titleLocked ? " - custom title" : "";
+  changed = setTitleIfChanged(button, `${label}${customTitle}${label !== fullTitle ? ` - ${fullTitle}` : ""} - ${tab.url} - double-click or F2 to rename`) || changed;
+  const ariaLabel = `${label}. ${tab.url}. Double-click or F2 to rename. ${closeLabel} with Delete.`;
   changed = setAttributeIfChanged(button, "aria-label", ariaLabel) || changed;
   changed = setTextIfChanged(parts.label, label) || changed;
   changed = setTitleIfChanged(parts.close, closeLabel) || changed;
@@ -15597,6 +15887,52 @@ function setBrowserTabDropTarget(session, button, mode) {
   session.tabDropTargetMode = mode;
 }
 
+function setBrowserTabDragSource(session, tabId, event = null) {
+  const source = {
+    panelId: session?.panelId || "",
+    tabId: String(tabId || "")
+  };
+  if (!source.panelId || !source.tabId) return null;
+  session.dragBrowserTabId = source.tabId;
+  state.browserTabDragSource = source;
+  if (event?.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-cmux-browser-tab", JSON.stringify(source));
+    event.dataTransfer.setData("text/plain", source.tabId);
+  }
+  return source;
+}
+
+function browserTabDragSource(event = null) {
+  const source = state.browserTabDragSource;
+  if (source?.panelId && source?.tabId) return source;
+  const raw = event?.dataTransfer?.getData?.("application/x-cmux-browser-tab") || "";
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const panelId = String(parsed?.panelId || "");
+    const tabId = String(parsed?.tabId || "");
+    return panelId && tabId ? { panelId, tabId } : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearBrowserTabDragSource(session = null) {
+  if (session) session.dragBrowserTabId = "";
+  const sourceSession = state.browserTabDragSource?.panelId
+    ? state.browserViews.get(state.browserTabDragSource.panelId)
+    : null;
+  if (sourceSession) sourceSession.dragBrowserTabId = "";
+  state.browserTabDragSource = null;
+}
+
+function canDropBrowserTabIntoSession(source, targetSession) {
+  if (!source?.panelId || !source?.tabId || !targetSession) return false;
+  if (source.panelId === targetSession.panelId) return true;
+  return !browserTabAtLimit(targetSession);
+}
+
 function moveBrowserTab(session, tabId, targetTabId, placement = "before") {
   if (!session || tabId === targetTabId) return false;
   const fromIndex = session.tabs.findIndex((tab) => tab.id === tabId);
@@ -15609,6 +15945,34 @@ function moveBrowserTab(session, tabId, targetTabId, placement = "before") {
   session.tabs.splice(insertIndex, 0, tab);
   saveBrowserSessionTabs(session);
   renderBrowserTabs(session);
+  return true;
+}
+
+function transferBrowserTabToSession(source, targetSession, targetTabId = "", placement = "after") {
+  const sourceSession = state.browserViews.get(source?.panelId || "");
+  if (!sourceSession || !targetSession || sourceSession === targetSession) return false;
+  if (browserTabAtLimit(targetSession)) {
+    toast(browserTabLimitMessage());
+    return false;
+  }
+  const sourceTab = sourceSession.tabs.find((tab) => tab.id === source.tabId);
+  if (!sourceTab) return false;
+  const tab = normalizeBrowserTab({
+    url: sourceTab.url,
+    title: sourceTab.title,
+    titleLocked: Boolean(sourceTab.titleLocked)
+  }, state.settings.browserHomeUrl);
+  if (!tab) return false;
+  let insertIndex = targetSession.tabs.length;
+  if (targetTabId) {
+    const targetIndex = targetSession.tabs.findIndex((candidate) => candidate.id === targetTabId);
+    if (targetIndex >= 0) insertIndex = targetIndex + (placement === "after" ? 1 : 0);
+  }
+  targetSession.tabs.splice(clamp(insertIndex, 0, targetSession.tabs.length), 0, tab);
+  closeBrowserTab(sourceSession, source.tabId, { focus: false });
+  activateBrowserTab(targetSession, tab.id);
+  focusBrowserTabButton(targetSession, tab.id);
+  toast("Browser tab moved.");
   return true;
 }
 
@@ -15635,6 +15999,7 @@ function duplicateBrowserTab(session, tabId) {
   const tab = normalizeBrowserTab({ url: source.url }, state.settings.browserHomeUrl);
   if (!tab) return false;
   tab.title = source.title || browserTabTitle(tab.url);
+  tab.titleLocked = Boolean(source.titleLocked);
   session.tabs.splice(index + 1, 0, tab);
   activateBrowserTab(session, tab.id);
   return true;
@@ -15670,6 +16035,81 @@ async function copyBrowserTabUrl(tab) {
   return false;
 }
 
+async function renameBrowserTab(session, tabId) {
+  const tab = session?.tabs?.find((candidate) => candidate.id === tabId);
+  if (!tab) return false;
+  const currentTitle = browserTabBaseLabel(tab);
+  const title = await showTextDialog({
+    title: "Rename browser tab",
+    value: currentTitle,
+    placeholder: "Tab name",
+    confirmLabel: "Rename"
+  });
+  if (title === null) return false;
+  const normalized = String(title || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!normalized) {
+    toast("Enter a tab name first.");
+    return false;
+  }
+  if (tab.title === normalized && tab.titleLocked) return false;
+  tab.title = normalized;
+  tab.titleLocked = true;
+  saveBrowserSessionTabsNow(session);
+  renderBrowserTabs(session);
+  toast("Browser tab renamed.");
+  return true;
+}
+
+function resetBrowserTabTitle(session, tabId) {
+  const tab = session?.tabs?.find((candidate) => candidate.id === tabId);
+  if (!tab) return false;
+  if (!tab.titleLocked) return false;
+  tab.titleLocked = false;
+  tab.title = browserTabTitle(tab.url);
+  saveBrowserSessionTabsNow(session);
+  renderBrowserTabs(session);
+  toast("Browser tab title is automatic.");
+  return true;
+}
+
+function openBrowserTabAsPane(session, tabId, direction = newPaneDirection()) {
+  const tab = session?.tabs?.find((candidate) => candidate.id === tabId);
+  if (!tab) return false;
+  const found = findPanelState(session.panelId);
+  const workspaceId = found?.workspace?.id || activeWorkspace()?.id || "";
+  if (!workspaceId) {
+    toast("Open a workspace before opening browser tabs as panes.");
+    return false;
+  }
+  if (paneCreationButtonsDisabled()) {
+    toast(paneCreationLimitLabel());
+    return false;
+  }
+  const paneTab = normalizeBrowserTab({
+    url: tab.url,
+    title: tab.title,
+    titleLocked: Boolean(tab.titleLocked)
+  }, state.settings.browserHomeUrl);
+  if (!paneTab) return false;
+  return createBrowserPanel(direction, {
+    workspaceId,
+    anchorPanelId: found?.panel?.id || session.panelId,
+    url: paneTab.url,
+    browserTabs: {
+      activeTabId: paneTab.id,
+      tabs: [paneTab]
+    }
+  });
+}
+
+async function moveBrowserTabAsPane(session, tabId, direction = newPaneDirection()) {
+  const createdPanel = await openBrowserTabAsPane(session, tabId, direction);
+  if (!createdPanel) return false;
+  closeBrowserTab(session, tabId, { focus: false });
+  toast("Browser tab moved to pane.");
+  return true;
+}
+
 function showBrowserTabContextMenu(event, session, tabId) {
   event.preventDefault();
   event.stopPropagation();
@@ -15685,18 +16125,36 @@ function showBrowserTabContextMenu(event, session, tabId) {
   meta.textContent = tab.url;
   const actions = contextMenuActionGroup(
     contextMenuButton(tab.id === session.activeTabId ? "Focused" : "Focus tab", () => activateBrowserTab(session, tab.id), tab.id === session.activeTabId),
+    contextMenuButton("Rename tab", () => renameBrowserTab(session, tab.id)),
+    contextMenuButton("Use automatic title", () => resetBrowserTabTitle(session, tab.id), !tab.titleLocked),
     contextMenuButton("New tab", () => createBrowserTab(session, state.settings.browserHomeUrl, { focusAddress: true })),
     contextMenuButton("Duplicate tab", () => duplicateBrowserTab(session, tab.id)),
     contextMenuButton("Copy URL", () => copyBrowserTabUrl(tab)),
     contextMenuButton(t("browser.openExternally"), () => openExternalBrowser(tab.url, { toast: true })),
     contextMenuButton(t("browser.openWithProfile"), () => showExternalBrowserProfileMenuAt(event.clientX, event.clientY, tab.url), false, "", { keepOpen: true })
   );
+  const paneDisabled = paneCreationButtonsDisabled();
+  const paneActions = contextMenuActionGroup(
+    contextMenuButton("Open tab right", () => openBrowserTabAsPane(session, tab.id, "right"), paneDisabled, "", { icon: "splitRight" }),
+    contextMenuButton("Open tab below", () => openBrowserTabAsPane(session, tab.id, "down"), paneDisabled, "", { icon: "splitDown" }),
+    contextMenuButton("Move tab right", () => moveBrowserTabAsPane(session, tab.id, "right"), paneDisabled, "", { icon: "splitRight" }),
+    contextMenuButton("Move tab below", () => moveBrowserTabAsPane(session, tab.id, "down"), paneDisabled, "", { icon: "splitDown" })
+  );
   const closeActions = contextMenuActionGroup(
     contextMenuButton("Close other tabs", () => closeOtherBrowserTabs(session, tab.id), session.tabs.length <= 1),
     contextMenuButton("Close tabs to right", () => closeBrowserTabsToRight(session, tab.id), session.tabs.findIndex((candidate) => candidate.id === tab.id) >= session.tabs.length - 1),
     contextMenuButton(session.tabs.length <= 1 ? "Reset tab" : "Close tab", () => closeBrowserTab(session, tab.id), false, "danger")
   );
-  menu.replaceChildren(title, meta, contextMenuSectionTitle("Tab"), actions, contextMenuSectionTitle("Close"), closeActions);
+  menu.replaceChildren(
+    title,
+    meta,
+    contextMenuSectionTitle("Tab"),
+    actions,
+    contextMenuSectionTitle("Pane"),
+    paneActions,
+    contextMenuSectionTitle("Close"),
+    closeActions
+  );
   showContextMenuAt(menu, event.clientX, event.clientY);
 }
 
@@ -15736,7 +16194,7 @@ function updateActiveBrowserTabUrl(session, value) {
   if (!url) return;
   if (tab.url === url) return;
   tab.url = url;
-  tab.title = browserTabTitle(url);
+  if (!tab.titleLocked) tab.title = browserTabTitle(url);
   saveBrowserSessionTabs(session);
   scheduleBrowserTabsRender(session);
 }
@@ -15744,6 +16202,7 @@ function updateActiveBrowserTabUrl(session, value) {
 function updateActiveBrowserTabTitle(session, value) {
   const tab = activeBrowserTab(session);
   if (!tab) return;
+  if (tab.titleLocked) return;
   const title = String(value || "").replace(/\s+/g, " ").trim().slice(0, 80);
   if (!title || title === tab.title) return;
   tab.title = title;
@@ -15751,7 +16210,7 @@ function updateActiveBrowserTabTitle(session, value) {
   scheduleBrowserTabsRender(session);
 }
 
-function activateBrowserTab(session, tabId) {
+function activateBrowserTab(session, tabId, options = {}) {
   if (!session) return false;
   const tab = session.tabs.find((candidate) => candidate.id === tabId);
   if (!tab) return false;
@@ -15768,7 +16227,7 @@ function activateBrowserTab(session, tabId) {
   queueBrowserUrlSync(session.panelId, tab.url);
   saveBrowserSessionTabs(session);
   renderBrowserTabs(session);
-  focusPanel(session.panelId);
+  if (options.focus !== false) focusPanel(session.panelId);
   return true;
 }
 
@@ -15787,7 +16246,7 @@ function createBrowserTab(session, value = state.settings.browserHomeUrl, option
   return true;
 }
 
-function closeBrowserTab(session, tabId) {
+function closeBrowserTab(session, tabId, options = {}) {
   if (!session) return false;
   const index = session.tabs.findIndex((tab) => tab.id === tabId);
   if (index < 0) return false;
@@ -15795,8 +16254,9 @@ function closeBrowserTab(session, tabId) {
     const tab = session.tabs[0];
     tab.url = normalizeBrowserPageUrl(state.settings.browserHomeUrl) || defaultSettings.browserHomeUrl;
     tab.title = browserTabTitle(tab.url);
+    tab.titleLocked = false;
     session.activeTabId = tab.id;
-    activateBrowserTab(session, tab.id);
+    activateBrowserTab(session, tab.id, { focus: options.focus });
     return true;
   }
   const wasActive = session.activeTabId === tabId;
@@ -15804,7 +16264,7 @@ function closeBrowserTab(session, tabId) {
   if (wasActive) {
     const nextTab = session.tabs[Math.min(index, session.tabs.length - 1)];
     session.activeTabId = nextTab.id;
-    activateBrowserTab(session, nextTab.id);
+    activateBrowserTab(session, nextTab.id, { focus: options.focus });
   } else {
     saveBrowserSessionTabsNow(session);
     renderBrowserTabs(session);
@@ -15962,6 +16422,7 @@ function ensureBrowser(panel, body) {
   let webviewReady = !isWebview;
   let loadingStatusTimer = 0;
   let browserLoadTimer = 0;
+  let browserFullscreenStatusTimer = 0;
   let browserLoadFailed = false;
   let session = null;
   const setAddressValue = (value) => {
@@ -16017,6 +16478,49 @@ function ensureBrowser(panel, body) {
         if (status.textContent === browserLoadingStatusText) setStatus("");
       }, 4500);
     }
+  };
+  const clearBrowserFullscreenStatus = () => {
+    if (!browserFullscreenStatusTimer) return;
+    clearTimeout(browserFullscreenStatusTimer);
+    browserFullscreenStatusTimer = 0;
+  };
+  const showBrowserFullscreenStatus = (message) => {
+    clearBrowserFullscreenStatus();
+    setStatus(message);
+    browserFullscreenStatusTimer = setTimeout(() => {
+      browserFullscreenStatusTimer = 0;
+      if (session?.statusText === message) setStatus("");
+    }, 2200);
+  };
+  const exitBrowserFullscreenRequest = () => {
+    const exitScript = "if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();";
+    try {
+      const result = typeof view.executeJavaScript === "function"
+        ? view.executeJavaScript(exitScript, false)
+        : null;
+      result?.catch?.(() => {});
+    } catch {
+      // Fullscreen recovery is best-effort; some guests reject script execution.
+    }
+    try {
+      if (document.fullscreenElement && typeof document.exitFullscreen === "function") {
+        document.exitFullscreen().catch?.(() => {});
+      }
+    } catch {
+      // Host fullscreen exit is also best-effort.
+    }
+  };
+  const handleBrowserFullscreenEnter = () => {
+    markInteractedPanel(panel.id);
+    if (browserFullscreenModeValue() === "native") {
+      showBrowserFullscreenStatus(t("browser.fullscreenNativeStatus"));
+      return;
+    }
+    showBrowserFullscreenStatus(t("browser.fullscreenKeptInPaneStatus"));
+    setTimeout(exitBrowserFullscreenRequest, 0);
+  };
+  const handleBrowserFullscreenLeave = () => {
+    showBrowserFullscreenStatus(t("browser.fullscreenExitStatus"));
   };
   const hideBrowserError = () => {
     setHiddenIfChanged(errorPane, true);
@@ -16125,8 +16629,10 @@ function ensureBrowser(panel, body) {
     loadDeferredBrowserSession(session);
   };
   tabNew.addEventListener("dragover", (event) => {
-    if (!session?.dragBrowserTabId) return;
+    const source = browserTabDragSource(event);
+    if (!canDropBrowserTabIntoSession(source, session)) return;
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     clearBrowserTabDropTargets(session);
     tabNew.classList.add("is-drop-before");
   });
@@ -16134,7 +16640,11 @@ function ensureBrowser(panel, body) {
   tabNew.addEventListener("drop", (event) => {
     event.preventDefault();
     tabNew.classList.remove("is-drop-before");
-    if (session?.dragBrowserTabId) moveBrowserTabToEnd(session, session.dragBrowserTabId);
+    const source = browserTabDragSource(event);
+    if (!source) return;
+    if (source.panelId === session.panelId) moveBrowserTabToEnd(session, source.tabId);
+    else transferBrowserTabToSession(source, session);
+    clearBrowserTabDragSource(session);
   });
   errorRetry.onclick = () => {
     hideBrowserError();
@@ -16200,6 +16710,8 @@ function ensureBrowser(panel, body) {
     event.preventDefault?.();
     lockBrowserViewZoom(view, { force: true });
   });
+  view.addEventListener("enter-html-full-screen", handleBrowserFullscreenEnter);
+  view.addEventListener("leave-html-full-screen", handleBrowserFullscreenLeave);
   view.addEventListener("dom-ready", () => {
     webviewReady = true;
     scheduleBrowserViewBoundsSync(session, browserViewBoundsSyncFrames);
@@ -16310,6 +16822,8 @@ function ensureBrowser(panel, body) {
     suspendInactive: state.settings.browserSuspendInactive,
     loadDeferred: false,
     initialLoadFrame: 0,
+    browserFullscreenStatusTimer: 0,
+    clearBrowserFullscreenStatus,
     suspendStopTimer: 0
   };
   if (typeof ResizeObserver === "function") {
@@ -16387,11 +16901,25 @@ function mergeSettingsInspectorRenderOptions(current = {}, next = {}) {
   };
 }
 
+function updateInspectorCloseButtonLabel() {
+  const label = state.inspectorMode === "settings"
+    ? "Close settings"
+    : state.inspectorMode === "notifications"
+      ? "Close notifications"
+      : state.inspectorMode === "session"
+        ? "Close session tools"
+        : "Close panel";
+  setTitleIfChanged(elements.closeInspector, label);
+  setAttributeIfChanged(elements.closeInspector, "aria-label", label);
+}
+
 function renderInspector(options = {}) {
   if (!state.inspectorMode) {
     state.inspectorSignature = "";
+    updateInspectorCloseButtonLabel();
     return;
   }
+  updateInspectorCloseButtonLabel();
   if (state.inspectorMode === "notifications") {
     const signature = inspectorContentSignature();
     if (signature === state.inspectorSignature) return;
@@ -16732,9 +17260,15 @@ function renderSettingsInspector(options = {}) {
       true,
       "browser pane zoom scale percentage readable web preview app localhost small panes"
     ));
+    browserSection.append(settingRow(
+      "Fullscreen",
+      settingSegmentedControl("browserFullscreenMode", browserFullscreenOptions, "browser pane fullscreen video web page app window stay in pane allow native", { compact: true }),
+      true,
+      "browser pane fullscreen video web page app window stay in pane allow native"
+    ));
     const homeActions = document.createElement("div");
     homeActions.className = "settings-actions";
-    homeActions.dataset.settingsSearch = normalizeSettingsQuery("browser home open cycle preset pane view reset default url page web launch mode system external profile chrome edge brave suspend inactive pane chrome tabs address controls full compact content zoom scale save browser profile reusable copy paste setup clipboard json");
+    homeActions.dataset.settingsSearch = normalizeSettingsQuery("browser home open cycle preset pane view reset default url page web launch mode system external profile chrome edge brave suspend inactive pane chrome tabs address controls full compact content zoom scale fullscreen video save browser profile reusable copy paste setup clipboard json");
     const browserHomeDefault = browserHomeKey(state.settings.browserHomeUrl) === browserHomeKey(defaultSettings.browserHomeUrl);
     const resetBrowserHomeAction = settingsActionButton("Reset", resetBrowserHome, "", `browser home reset default url page web ${browserHomeDefault ? "active current " : ""}`);
     resetBrowserHomeAction.dataset.browserAction = "reset-home";
@@ -16752,16 +17286,17 @@ function renderSettingsInspector(options = {}) {
       ? "Browser launch settings already use defaults."
       : "Reset launch mode, external profile, and inactive-pane suspension to defaults.";
     const browserPaneViewDefault = state.settings.browserChromeMode === defaultSettings.browserChromeMode
-      && state.settings.browserZoom === defaultSettings.browserZoom;
-    const resetBrowserPaneViewAction = settingsActionButton("Reset pane view", resetBrowserPaneView, "", `browser pane chrome zoom reset default full 100 ${browserPaneViewDefault ? "active current " : ""}`);
+      && state.settings.browserZoom === defaultSettings.browserZoom
+      && state.settings.browserFullscreenMode === defaultSettings.browserFullscreenMode;
+    const resetBrowserPaneViewAction = settingsActionButton("Reset pane view", resetBrowserPaneView, "", `browser pane chrome zoom fullscreen reset default full 100 ${browserPaneViewDefault ? "active current " : ""}`);
     resetBrowserPaneViewAction.dataset.browserAction = "reset-pane-view";
     resetBrowserPaneViewAction.disabled = browserPaneViewDefault;
     resetBrowserPaneViewAction.title = browserPaneViewDefault
-      ? "Browser pane chrome and zoom already use defaults."
-      : "Reset browser pane chrome and zoom to defaults.";
-    const copyBrowser = settingsActionButton("Copy setup", copyBrowserSetup, "", "browser setup copy home launch external profile suspend pane chrome tabs address controls full compact content zoom scale clipboard json");
-    copyBrowser.title = "Copy browser home, launch mode, external profile, suspend setting, pane chrome, and pane zoom as JSON.";
-    const pasteBrowser = settingsActionButton("Paste setup", pasteBrowserSetup, "", "browser setup paste home launch external profile suspend pane chrome tabs address controls full compact content zoom scale clipboard json");
+      ? "Browser pane chrome, zoom, and fullscreen behavior already use defaults."
+      : "Reset browser pane chrome, zoom, and fullscreen behavior to defaults.";
+    const copyBrowser = settingsActionButton("Copy setup", copyBrowserSetup, "", "browser setup copy home launch external profile suspend pane chrome tabs address controls full compact content zoom scale fullscreen clipboard json");
+    copyBrowser.title = "Copy browser home, launch mode, external profile, suspend setting, pane chrome, pane zoom, and fullscreen behavior as JSON.";
+    const pasteBrowser = settingsActionButton("Paste setup", pasteBrowserSetup, "", "browser setup paste home launch external profile suspend pane chrome tabs address controls full compact content zoom scale fullscreen clipboard json");
     pasteBrowser.title = "Apply copied cmux browser setup.";
     const homeCycle = browserHomePresetCycleModel();
     const cycleBrowserHome = settingsActionButton("Cycle home", cycleBrowserHomePreset, "", `browser home preset cycle next homepage google github localhost vite angular flask python asp net api backend web url ${homeCycle.search}`);
@@ -16790,6 +17325,15 @@ function renderSettingsInspector(options = {}) {
       "Save this browser setup as a reusable Settings profile."
     );
     saveBrowserProfile.dataset.browserAction = "save-profile";
+    const openBrowserPaneAction = attachBrowserPanePlacementMenu(
+      settingsActionButton("Open pane", () => createBrowserPanel(newPaneDirection(), { url: state.settings.browserHomeUrl })),
+      () => ({
+        title: "Open browser pane",
+        url: state.settings.browserHomeUrl,
+        workspaceId: activeWorkspace()?.id
+      })
+    );
+    openBrowserPaneAction.title = `${paneCreationActionTitle("Open a browser pane.", newPanePlacementHint())} Right-click to choose right or below.`;
     homeActions.append(
       saveBrowserProfile,
       cycleBrowserHome,
@@ -16798,7 +17342,7 @@ function renderSettingsInspector(options = {}) {
       copyBrowser,
       pasteBrowser,
       resetBrowserSetupAction,
-      settingsActionButton("Open pane", () => createPanel("browser", newPaneDirection(), { url: state.settings.browserHomeUrl })),
+      openBrowserPaneAction,
       settingsActionButton("Open external", () => openExternalBrowser(state.settings.browserHomeUrl, { toast: true }), "", "browser system chrome edge brave profile external"),
       settingsActionButton("Refresh profiles", () => refreshBrowserProfiles({ render: true }), "", "browser chrome edge brave profile detect refresh reload"),
       resetBrowserLaunchAction,
@@ -17073,6 +17617,10 @@ function renderSettingsInspector(options = {}) {
     const cursorBlinkInput = cursorBlinkToggle.querySelector("input");
     if (cursorBlinkInput) cursorBlinkInput.dataset.settingControl = "terminalCursorBlink";
     terminalSection.append(settingRow("Cursor blink", cursorBlinkToggle));
+    const multilinePasteToggle = toggleInput(state.settings.terminalConfirmMultilinePaste, (checked) => updateSettings({ terminalConfirmMultilinePaste: checked }));
+    const multilinePasteInput = multilinePasteToggle.querySelector("input");
+    if (multilinePasteInput) multilinePasteInput.dataset.settingControl = "terminalConfirmMultilinePaste";
+    terminalSection.append(settingRow("Confirm multiline paste", multilinePasteToggle, false, "terminal paste clipboard multiline multi line enter command run safety confirm"));
     terminalSection.append(terminalColorDisclosurePanel());
     terminalSection.append(settingRow(
       "Background color",
@@ -17120,10 +17668,10 @@ function renderSettingsInspector(options = {}) {
     copyTerminalSetupAction.title = "Copy the current terminal font, spacing, colors, cursor, and shell setup.";
     const pasteTerminalSetupAction = settingsActionButton("Paste setup", pasteTerminalSetup, "", "terminal setup paste font size line height padding history color cursor shell clipboard json");
     pasteTerminalSetupAction.title = "Apply a copied cmux terminal setup.";
-    const copyTerminalColors = settingsActionButton("Copy colors", copyTerminalColorPalette, "", "terminal color copy palette json clipboard background foreground cursor");
-    copyTerminalColors.title = "Copy the current terminal background, text, and cursor color setup.";
-    const pasteTerminalColors = settingsActionButton("Paste colors", pasteTerminalColorPalette, "", "terminal color paste palette json clipboard background foreground cursor");
-    pasteTerminalColors.title = "Apply terminal colors copied from cmux.";
+    const copyTerminalColors = settingsActionButton("Copy colors", copyTerminalColorPalette, "", "terminal color copy palette json clipboard background foreground cursor all terminals new global");
+    copyTerminalColors.title = "Copy the current all-terminal background, text, and cursor color setup.";
+    const pasteTerminalColors = settingsActionButton("Paste colors", pasteTerminalColorPalette, "", "terminal color paste palette json clipboard background foreground cursor all terminals new global");
+    pasteTerminalColors.title = "Apply copied terminal colors to all terminals + new.";
     const fontCycle = terminalFontCycleModel();
     const cycleTerminalFontAction = settingsActionButton("Cycle font", cycleTerminalFont, "", `terminal font cycle next typography gallery preview monospace ${fontCycle.search}`);
     cycleTerminalFontAction.dataset.terminalAction = "cycle-font";
@@ -17149,8 +17697,8 @@ function renderSettingsInspector(options = {}) {
     resetTerminalColors.dataset.terminalAction = "reset-colors";
     resetTerminalColors.disabled = terminalColorsReset;
     resetTerminalColors.title = terminalColorsReset
-      ? "Terminal colors already match the cmux default."
-      : "Reset background, text, and cursor colors to the cmux default.";
+      ? "Terminal colors already match the cmux default for all terminals + new."
+      : "Reset background, text, and cursor colors to the cmux default for all terminals + new.";
     const resetTerminalSetupAction = settingsActionButton("Reset setup", resetTerminalSetupSettings, "", `terminal setup reset default font size line height padding history color cursor shell ${terminalSetupDefault ? "active current " : ""}`);
     resetTerminalSetupAction.dataset.terminalAction = "reset-setup";
     resetTerminalSetupAction.disabled = terminalSetupDefault;
@@ -17231,11 +17779,17 @@ function settingsScrollTargetElement(targetId = state.settingsScrollTarget) {
 
 function scheduleSettingsScrollTargetIntoView(targetId = state.settingsScrollTarget) {
   if (!targetId) return;
+  setSettingsScrollLayoutNeeded(true);
   requestAnimationFrame(() => {
     const target = settingsScrollTargetElement(targetId);
-    if (!target) return;
+    if (!target) {
+      setSettingsScrollLayoutNeeded(false);
+      return;
+    }
     state.settingsScrollTarget = "";
     scrollSettingsSearchTargetIntoView(target);
+    requestAnimationFrame(() => setSettingsScrollLayoutNeeded(false));
+    window.setTimeout(() => setSettingsScrollLayoutNeeded(false), 260);
   });
 }
 
@@ -17369,6 +17923,9 @@ function activeWorkspaceSettingsSignature() {
     appendSignatureValue(nextParts, panel.shellPath);
     appendSignatureValue(nextParts, panel.terminalFontSize || 0);
     appendSignatureValue(nextParts, panel.backgroundImage || "");
+    appendSignatureValue(nextParts, panel.terminalBackground || "");
+    appendSignatureValue(nextParts, panel.terminalForeground || "");
+    appendSignatureValue(nextParts, panel.terminalCursorColor || "");
     appendSignatureValue(nextParts, panel.url);
     appendSignatureValue(nextParts, isPanelMinimized(panel));
     appendSignatureValue(nextParts, isPendingPanel(panel));
@@ -17393,6 +17950,9 @@ function appearanceWorkspaceSettingsSignature(workspace = activeWorkspace()) {
     appendSignatureValue(nextParts, panel.title || "");
     appendSignatureValue(nextParts, panel.color || "");
     appendSignatureValue(nextParts, panel.type === "terminal" ? panel.backgroundImage || "" : "");
+    appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalBackground || "" : "");
+    appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalForeground || "" : "");
+    appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalCursorColor || "" : "");
     appendSignatureValue(nextParts, isPendingPanel(panel));
   });
   return parts.join("");
@@ -17475,6 +18035,9 @@ function quickWorkspaceSettingsSignature(workspace = activeWorkspace()) {
   appendSignatureValue(parts, state.focusedPanelId || "");
   appendSignatureValue(parts, activeTerminal?.id || "");
   appendSignatureValue(parts, activeTerminal?.backgroundImage || "");
+  appendSignatureValue(parts, activeTerminal?.terminalBackground || "");
+  appendSignatureValue(parts, activeTerminal?.terminalForeground || "");
+  appendSignatureValue(parts, activeTerminal?.terminalCursorColor || "");
   appendSignatureArray(parts, workspace.panels || [], (nextParts, panel) => {
     appendSignatureValue(nextParts, panel.id);
     appendSignatureValue(nextParts, panel.type);
@@ -17485,6 +18048,9 @@ function quickWorkspaceSettingsSignature(workspace = activeWorkspace()) {
     appendSignatureValue(nextParts, panel.type === "browser" ? panel.url || "" : "");
     appendSignatureValue(nextParts, panel.type === "browser" ? browserPanePageTitleSuggestion(panel) : "");
     appendSignatureValue(nextParts, panel.type === "terminal" ? panel.backgroundImage || "" : "");
+    appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalBackground || "" : "");
+    appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalForeground || "" : "");
+    appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalCursorColor || "" : "");
     appendSignatureValue(nextParts, panel.type === "terminal" ? panel.terminalFontSize || 0 : 0);
     appendSignatureValue(nextParts, isPendingPanel(panel));
   });
@@ -17577,6 +18143,7 @@ function renderSettingsChrome(host) {
     labels: {
       searchPlaceholder: t("settings.searchPlaceholder"),
       clearSearch: t("settings.clearSearch"),
+      closeSearch: t("settings.closeSearch"),
       searchHint: t("settings.searchHint"),
       pageLabel: t("settings.pageLabel"),
       pageAriaLabel: t("settings.pageAriaLabel"),
@@ -17631,7 +18198,7 @@ function settingsSearch() {
     const wasSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
     state.settingsQuery = input.value;
     wrapper.classList.toggle("has-query", Boolean(state.settingsQuery));
-    clear.disabled = !state.settingsQuery;
+    syncSettingsSearchClearButton();
     const isSearching = Boolean(normalizeSettingsQuery(state.settingsQuery));
     const displayedCategoryChanged = previousDisplayedCategory !== displayedSettingsCategory();
     state.settingsSearchResultText = isSearching ? t("settings.searching") : "";
@@ -17650,19 +18217,28 @@ function settingsSearch() {
     scheduleSettingsFilter({ delay: settingsSearchInteractiveFilterDelayMs });
   });
   input.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !state.settingsQuery) return;
+    if (event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
-    clearSettingsSearch();
+    if (state.settingsQuery) clearSettingsSearch();
+    else input.blur();
   });
+  input.addEventListener("focus", () => wrapper.classList.add("is-focused"));
+  input.addEventListener("blur", () => wrapper.classList.remove("is-focused"));
   const clear = document.createElement("button");
   clear.className = "settings-search-clear";
   clear.type = "button";
-  clear.title = t("settings.clearSearch");
-  clear.setAttribute("aria-label", t("settings.clearSearch"));
   clear.innerHTML = controlIconMarkup("close");
-  clear.disabled = !state.settingsQuery;
-  clear.onclick = () => clearSettingsSearch();
+  const syncSettingsSearchClearButton = () => {
+    const label = state.settingsQuery ? t("settings.clearSearch") : t("settings.closeSearch");
+    clear.title = label;
+    clear.setAttribute("aria-label", label);
+  };
+  syncSettingsSearchClearButton();
+  clear.onclick = () => {
+    if (state.settingsQuery) clearSettingsSearch();
+    else input.blur();
+  };
   const feedback = document.createElement("div");
   feedback.className = "settings-search-feedback";
   feedback.dataset.settingsSearchFeedback = "true";
@@ -18330,12 +18906,12 @@ function activeBackgroundTargetStatus(target = state.backgroundApplyTarget, work
   const paneBackgrounds = terminalPanels.filter((panel) => normalizeBackgroundValue(panel.backgroundImage));
   return {
     scope,
-    canTarget: scope === "app" || (scope === "pane" ? Boolean(activeTerminal) : terminalPanels.length > 0),
+    canTarget: scope === "app" || (scope === "pane" ? Boolean(activeTerminal) : true),
     hasValue: scope === "app"
       ? Boolean(state.settings.backgroundImage)
       : scope === "pane"
         ? Boolean(activeTerminal && normalizeBackgroundValue(activeTerminal.backgroundImage))
-        : paneBackgrounds.length > 0
+        : Boolean(terminalDefaultBackgroundImage() || paneBackgrounds.length > 0)
   };
 }
 
@@ -18360,14 +18936,23 @@ function activeBackgroundPanelViewModel(target = state.backgroundApplyTarget, wo
     background = activeTerminal?.backgroundImage || "";
     emptySource = activeTerminal ? "No background on the active terminal." : "Select a terminal pane first.";
   } else if (scope === "all") {
-    kicker = "All terminal backgrounds";
-    emptySource = terminalPanels.length ? "No terminal backgrounds in this workspace." : "Open a terminal pane first.";
+    const defaultBackground = terminalDefaultBackgroundImage();
+    kicker = "Terminal backgrounds";
+    emptySource = defaultBackground
+      ? "Future terminals use this default background."
+      : "No terminal background default.";
     const backgrounds = terminalPanels
       .map((panel) => normalizeBackgroundValue(panel.backgroundImage))
       .filter(Boolean);
     const uniqueBackgrounds = [...new Set(backgrounds)];
-    if (uniqueBackgrounds.length === 1 && backgrounds.length === terminalPanels.length) {
+    if (terminalPanels.length === 0) {
+      background = defaultBackground;
+    } else if (uniqueBackgrounds.length === 1 && backgrounds.length === terminalPanels.length) {
       background = uniqueBackgrounds[0];
+      mixed = Boolean(defaultBackground && defaultBackground !== background);
+    } else if (uniqueBackgrounds.length === 0) {
+      background = defaultBackground;
+      mixed = Boolean(defaultBackground);
     } else if (uniqueBackgrounds.length > 0) {
       mixed = true;
     }
@@ -18382,8 +18967,8 @@ function activeBackgroundPanelViewModel(target = state.backgroundApplyTarget, wo
     hasBackground,
     mixed,
     kicker,
-    label: mixed ? "Mixed terminal backgrounds" : hasBackground ? appearanceBackgroundLabel(background) : "None",
-    source: mixed ? "Terminal panes have different backgrounds." : backgroundSourceText(background, emptySource),
+    label: mixed ? "Mixed terminal backgrounds/default" : hasBackground ? appearanceBackgroundLabel(background) : "None",
+    source: mixed ? "Current terminal panes and the future-terminal default do not match." : backgroundSourceText(background, emptySource),
     image: mixed ? "none" : backgroundCss(background),
     repeat: mixed ? "no-repeat" : backgroundRepeatCss(background, state.settings.backgroundRepeatMode),
     size: backgroundSizeCss(state.settings.backgroundFit),
@@ -19089,6 +19674,7 @@ function lookPackSummary(pack) {
 
 function isActiveLookPack(pack) {
   if (!pack?.settings) return false;
+  if (terminalColorOverridesMaskSettings(pack.settings)) return false;
   return Object.entries(pack.settings).every(([key, value]) => {
     const current = state.settings[key];
     if (key === "accent" || key.startsWith("terminal")) return colorKey(current) === colorKey(value);
@@ -19135,14 +19721,15 @@ function lookPackProfileSaveTitle(pack, savedProfile = savedSettingsProfileForLo
   return "Save this look pack as a reusable Settings profile.";
 }
 
-function applyLookPack(packId, options = {}) {
+async function applyLookPack(packId, options = {}) {
   const pack = lookPackById(packId);
   if (!pack) {
     toast("Look pack not found.");
     return false;
   }
   const changed = updateSettings(pack.settings);
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(pack.settings, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     toast(`${pack.label} look already active.`);
     return false;
   }
@@ -20313,7 +20900,7 @@ function browserHomeParts(value) {
   }
 }
 
-const browserSetupSettings = ["browserHomeUrl", "browserLaunchMode", "externalBrowserProfileId", "browserSuspendInactive", "browserChromeMode", "browserZoom"];
+const browserSetupSettings = ["browserHomeUrl", "browserLaunchMode", "externalBrowserProfileId", "browserSuspendInactive", "browserChromeMode", "browserZoom", "browserFullscreenMode"];
 
 const browserWorkflowPresets = [
   {
@@ -20326,7 +20913,8 @@ const browserWorkflowPresets = [
       externalBrowserProfileId: "system",
       browserSuspendInactive: true,
       browserChromeMode: "full",
-      browserZoom: "100"
+      browserZoom: "100",
+      browserFullscreenMode: "pane"
     }
   },
   {
@@ -20339,7 +20927,8 @@ const browserWorkflowPresets = [
       externalBrowserProfileId: "system",
       browserSuspendInactive: true,
       browserChromeMode: "full",
-      browserZoom: "100"
+      browserZoom: "100",
+      browserFullscreenMode: "pane"
     }
   },
   {
@@ -20352,7 +20941,8 @@ const browserWorkflowPresets = [
       externalBrowserProfileId: "system",
       browserSuspendInactive: false,
       browserChromeMode: "content",
-      browserZoom: "100"
+      browserZoom: "100",
+      browserFullscreenMode: "pane"
     }
   },
   {
@@ -20365,7 +20955,8 @@ const browserWorkflowPresets = [
       externalBrowserProfileId: "system",
       browserSuspendInactive: false,
       browserChromeMode: "content",
-      browserZoom: "100"
+      browserZoom: "100",
+      browserFullscreenMode: "pane"
     }
   },
   {
@@ -20378,7 +20969,8 @@ const browserWorkflowPresets = [
       externalBrowserProfileId: "system",
       browserSuspendInactive: false,
       browserChromeMode: "compact",
-      browserZoom: "100"
+      browserZoom: "100",
+      browserFullscreenMode: "pane"
     }
   }
 ];
@@ -20388,7 +20980,7 @@ function browserSettingsPreviewPanel() {
   const recent = state.recentBrowserPages[0] ? browserHomeParts(state.recentBrowserPages[0]) : null;
   const panel = document.createElement("div");
   panel.className = `browser-settings-preview browser-zoom-${browserZoomValue()} browser-chrome-${browserChromeModeValue()}`;
-  panel.dataset.settingsSearch = normalizeSettingsQuery("browser preview home url web page hostname recent history preset localhost github pane chrome tabs address controls full compact content zoom scale percentage");
+  panel.dataset.settingsSearch = normalizeSettingsQuery("browser preview home url web page hostname recent history preset localhost github pane chrome tabs address controls full compact content zoom scale percentage fullscreen video");
   panel.style.setProperty("--browser-preview-zoom-scale", String(browserZoomFactor()));
   panel.innerHTML = `
     <div class="browser-preview-frame" aria-hidden="true">
@@ -20409,6 +21001,7 @@ function browserSettingsPreviewPanel() {
       <span><b>Profile</b><em data-browser-preview-profile></em></span>
       <span><b>Chrome</b><em data-browser-preview-chrome></em></span>
       <span><b>Zoom</b><em data-browser-preview-zoom></em></span>
+      <span><b>Fullscreen</b><em data-browser-preview-fullscreen></em></span>
       <span><b>Host</b><em data-browser-preview-host-meta></em></span>
       <span><b>Recent</b><em data-browser-preview-recent></em></span>
     </div>
@@ -20421,6 +21014,7 @@ function browserSettingsPreviewPanel() {
   panel.querySelector("[data-browser-preview-profile]").textContent = browserProfileLabel();
   panel.querySelector("[data-browser-preview-chrome]").textContent = browserChromeModeLabel();
   panel.querySelector("[data-browser-preview-zoom]").textContent = browserZoomLabel();
+  panel.querySelector("[data-browser-preview-fullscreen]").textContent = browserFullscreenModeLabel();
   panel.querySelector("[data-browser-preview-host-meta]").textContent = home.host;
   panel.querySelector("[data-browser-preview-recent]").textContent = recent
     ? `${state.recentBrowserPages.length} / ${recent.host}`
@@ -20444,13 +21038,14 @@ function browserWorkflowPresetSummary(settings) {
     optionLabel(browserLaunchModeOptions, settings.browserLaunchMode, settings.browserLaunchMode),
     settings.browserSuspendInactive ? "Suspend" : "Live",
     browserChromeModeLabel(settings.browserChromeMode),
-    browserZoomLabel(settings.browserZoom)
+    browserZoomLabel(settings.browserZoom),
+    browserFullscreenModeLabel(settings.browserFullscreenMode)
   ];
 }
 
 function browserWorkflowPresetBaseSearchText(preset, settings) {
   return [
-    "browser workflow preset setup home launch external profile suspend pane chrome tabs address controls full compact content zoom scale localhost local dev app api backend 3000 5173 8080",
+    "browser workflow preset setup home launch external profile suspend pane chrome tabs address controls full compact content zoom scale fullscreen video localhost local dev app api backend 3000 5173 8080",
     preset?.label || "",
     preset?.body || "",
     settings?.browserHomeUrl || "",
@@ -20458,7 +21053,8 @@ function browserWorkflowPresetBaseSearchText(preset, settings) {
     browserProfileLabel(settings?.externalBrowserProfileId),
     settings?.browserSuspendInactive ? "suspend inactive" : "live inactive",
     browserChromeModeLabel(settings?.browserChromeMode),
-    browserZoomLabel(settings?.browserZoom)
+    browserZoomLabel(settings?.browserZoom),
+    browserFullscreenModeLabel(settings?.browserFullscreenMode)
   ].join(" ");
 }
 
@@ -20505,7 +21101,8 @@ function isActiveBrowserWorkflowPreset(preset) {
     && settings.externalBrowserProfileId === state.settings.externalBrowserProfileId
     && settings.browserSuspendInactive === state.settings.browserSuspendInactive
     && settings.browserChromeMode === state.settings.browserChromeMode
-    && settings.browserZoom === state.settings.browserZoom;
+    && settings.browserZoom === state.settings.browserZoom
+    && settings.browserFullscreenMode === state.settings.browserFullscreenMode;
 }
 
 function browserWorkflowPresetProfileSettings(preset) {
@@ -20545,7 +21142,7 @@ function browserWorkflowPresetCopyTitle(preset) {
 function browserWorkflowPresetGrid() {
   const grid = document.createElement("div");
   grid.className = "browser-workflow-preset-grid";
-  grid.dataset.settingsSearch = normalizeSettingsQuery("browser workflow presets setup home launch external profile suspend live pane chrome tabs address controls full compact content zoom scale save copy localhost local dev app api backend 3000 5173 8080");
+  grid.dataset.settingsSearch = normalizeSettingsQuery("browser workflow presets setup home launch external profile suspend live pane chrome tabs address controls full compact content zoom scale fullscreen video save copy localhost local dev app api backend 3000 5173 8080");
   for (const preset of browserWorkflowPresets) {
     const settings = browserWorkflowPresetSettings(preset);
     if (!settings) continue;
@@ -20575,17 +21172,19 @@ function browserWorkflowPresetGrid() {
         <span data-browser-workflow-inactive></span>
         <span data-browser-workflow-chrome></span>
         <span data-browser-workflow-zoom></span>
+        <span data-browser-workflow-fullscreen></span>
       </span>
     `;
     button.querySelector(".browser-workflow-preset-title").textContent = preset.label;
     button.querySelector(".browser-workflow-preset-status").textContent = active ? "Active" : "";
     button.querySelector(".browser-workflow-preset-body").textContent = preset.body;
-    const [home, launch, inactive, chrome, zoom] = browserWorkflowPresetSummary(settings);
+    const [home, launch, inactive, chrome, zoom, fullscreen] = browserWorkflowPresetSummary(settings);
     button.querySelector("[data-browser-workflow-home]").textContent = home;
     button.querySelector("[data-browser-workflow-launch]").textContent = launch;
     button.querySelector("[data-browser-workflow-inactive]").textContent = inactive;
     button.querySelector("[data-browser-workflow-chrome]").textContent = chrome;
     button.querySelector("[data-browser-workflow-zoom]").textContent = zoom;
+    button.querySelector("[data-browser-workflow-fullscreen]").textContent = fullscreen;
     button.onclick = () => applyBrowserWorkflowPreset(preset.id);
     const actions = document.createElement("div");
     actions.className = "browser-workflow-preset-actions";
@@ -20956,25 +21555,25 @@ const browserPaneViewPresets = [
     id: "full",
     label: "Full 100%",
     body: "Show normal browser tabs and controls at default scale.",
-    settings: { browserChromeMode: "full", browserZoom: "100" }
+    settings: { browserChromeMode: "full", browserZoom: "100", browserFullscreenMode: "pane" }
   },
   {
     id: "compact",
     label: "Compact 100%",
     body: "Keep the address and tab controls tighter without changing page scale.",
-    settings: { browserChromeMode: "compact", browserZoom: "100" }
+    settings: { browserChromeMode: "compact", browserZoom: "100", browserFullscreenMode: "pane" }
   },
   {
     id: "contentDense",
     label: "Content 90%",
     body: "Prioritize page content for app previews and dense local dashboards.",
-    settings: { browserChromeMode: "content", browserZoom: "90" }
+    settings: { browserChromeMode: "content", browserZoom: "90", browserFullscreenMode: "pane" }
   },
   {
     id: "readable",
     label: "Readable 110%",
     body: "Use compact browser controls with larger page text.",
-    settings: { browserChromeMode: "compact", browserZoom: "110" }
+    settings: { browserChromeMode: "compact", browserZoom: "110", browserFullscreenMode: "pane" }
   }
 ];
 
@@ -20982,23 +21581,26 @@ function browserPaneViewPresetSettings(preset) {
   if (!preset) return null;
   const chrome = browserChromeModeValue(preset.settings?.browserChromeMode);
   const zoom = browserZoomValue(preset.settings?.browserZoom);
-  return { browserChromeMode: chrome, browserZoom: zoom };
+  const fullscreen = browserFullscreenModeValue(preset.settings?.browserFullscreenMode);
+  return { browserChromeMode: chrome, browserZoom: zoom, browserFullscreenMode: fullscreen };
 }
 
 function isActiveBrowserPaneViewPreset(preset) {
   const settings = browserPaneViewPresetSettings(preset);
   if (!settings) return false;
   return settings.browserChromeMode === browserChromeModeValue()
-    && settings.browserZoom === browserZoomValue();
+    && settings.browserZoom === browserZoomValue()
+    && settings.browserFullscreenMode === browserFullscreenModeValue();
 }
 
 function browserPaneViewPresetSearchText(preset, settings = browserPaneViewPresetSettings(preset)) {
   return normalizeSettingsQuery([
-    "browser pane view preset chrome zoom cycle full compact content dense readable tabs address controls preview local app dashboard scale",
+    "browser pane view preset chrome zoom fullscreen video cycle full compact content dense readable tabs address controls preview local app dashboard scale",
     preset?.label || "",
     preset?.body || "",
     browserChromeModeLabel(settings?.browserChromeMode),
-    browserZoomLabel(settings?.browserZoom)
+    browserZoomLabel(settings?.browserZoom),
+    browserFullscreenModeLabel(settings?.browserFullscreenMode)
   ].join(" "));
 }
 
@@ -21059,7 +21661,8 @@ function resetBrowserHome(options = {}) {
 function resetBrowserPaneView(options = {}) {
   const changed = updateSettings({
     browserChromeMode: defaultSettings.browserChromeMode,
-    browserZoom: defaultSettings.browserZoom
+    browserZoom: defaultSettings.browserZoom,
+    browserFullscreenMode: defaultSettings.browserFullscreenMode
   });
   if (!changed) {
     if (options.toast !== false) toast("Browser pane view already uses defaults.");
@@ -21124,7 +21727,8 @@ function browserSetupSummaryForSettings(settingsSource = state.settings) {
     profile: browserProfileLabel(settingsSource.externalBrowserProfileId),
     inactivePanes: settingsSource.browserSuspendInactive ? "Suspended" : "Kept live",
     chrome: browserChromeModeLabel(settingsSource.browserChromeMode),
-    zoom: browserZoomLabel(settingsSource.browserZoom)
+    zoom: browserZoomLabel(settingsSource.browserZoom),
+    fullscreen: browserFullscreenModeLabel(settingsSource.browserFullscreenMode)
   };
 }
 
@@ -21135,7 +21739,8 @@ function browserSetupPayload(settingsSource = state.settings) {
     externalBrowserProfileId: settingsSource.externalBrowserProfileId,
     browserSuspendInactive: settingsSource.browserSuspendInactive,
     browserChromeMode: browserChromeModeValue(settingsSource.browserChromeMode),
-    browserZoom: browserZoomValue(settingsSource.browserZoom)
+    browserZoom: browserZoomValue(settingsSource.browserZoom),
+    browserFullscreenMode: browserFullscreenModeValue(settingsSource.browserFullscreenMode)
   };
   return {
     version: 1,
@@ -21175,6 +21780,7 @@ function browserSetupSettingUpdateFromValue(key, raw) {
   if (key === "browserLaunchMode") return optionIdAllowed(browserLaunchModeOptions, raw) ? raw : null;
   if (key === "browserChromeMode") return optionIdAllowed(browserChromeOptions, raw) ? raw : null;
   if (key === "browserZoom") return optionIdAllowed(browserZoomOptions, String(raw || "")) ? String(raw) : null;
+  if (key === "browserFullscreenMode") return optionIdAllowed(browserFullscreenOptions, raw) ? raw : null;
   if (key === "externalBrowserProfileId") {
     if (raw === null || raw === "") return "system";
     if (typeof raw !== "string") return null;
@@ -21297,6 +21903,7 @@ function browserTabSessionModelFromSnapshot(snapshot, fallbackUrl = state.settin
     activeIndex,
     tabs: normalized.tabs.map((tab) => ({
       title: tab.title || browserTabTitle(tab.url),
+      titleLocked: Boolean(tab.titleLocked),
       url: tab.url
     }))
   };
@@ -21545,28 +22152,28 @@ function applyBrowserTabSessionToPanel(panel, item, options = {}) {
   return true;
 }
 
-async function createBrowserTabSessionPane(item, workspaceId = activeWorkspace()?.id) {
+async function createBrowserTabSessionPane(item, workspaceId = activeWorkspace()?.id, options = {}) {
   if (!workspaceId) {
     toast("Open a workspace before restoring browser tabs.");
     return null;
   }
   const snapshot = normalizeBrowserTabSnapshot(item?.snapshot, state.settings.browserHomeUrl);
   const activeTab = browserTabSessionActiveTab(snapshot);
-  return createPanel("browser", newPaneDirection(), {
+  return createBrowserPanel(options.direction || newPaneDirection(), {
     workspaceId,
     url: activeTab?.url || state.settings.browserHomeUrl,
     browserTabs: snapshot
   });
 }
 
-async function duplicateBrowserTabSessionByPanelId(panelId) {
+async function duplicateBrowserTabSessionByPanelId(panelId, options = {}) {
   const entry = browserTabSessionEntries().find((candidate) => candidate.id === panelId);
   if (!entry) {
     toast("Browser tab session not found.");
     return false;
   }
   try {
-    const created = await createBrowserTabSessionPane({ label: entry.label, snapshot: entry.snapshot }, entry.workspace?.id);
+    const created = await createBrowserTabSessionPane({ label: entry.label, snapshot: entry.snapshot }, entry.workspace?.id, options);
     if (!created) return false;
     toast("Browser tab session duplicated.");
     return true;
@@ -21574,6 +22181,19 @@ async function duplicateBrowserTabSessionByPanelId(panelId) {
     toast("Could not duplicate browser tab session.");
     return false;
   }
+}
+
+function showBrowserTabSessionPlacementMenu(event, entry) {
+  if (!entry) return;
+  const snapshot = normalizeBrowserTabSnapshot(entry.snapshot, state.settings.browserHomeUrl);
+  const activeTab = browserTabSessionActiveTab(snapshot);
+  showBrowserPanePlacementMenu(event, {
+    title: "Duplicate browser tabs",
+    workspace: entry.workspace,
+    workspaceId: entry.workspace?.id,
+    url: activeTab?.url || state.settings.browserHomeUrl,
+    create: (direction) => duplicateBrowserTabSessionByPanelId(entry.id, { direction })
+  });
 }
 
 async function pasteBrowserTabSessions(options = {}) {
@@ -21707,20 +22327,21 @@ function refreshBrowserSetupActions() {
   );
 
   const browserPaneViewDefault = state.settings.browserChromeMode === defaultSettings.browserChromeMode
-    && state.settings.browserZoom === defaultSettings.browserZoom;
+    && state.settings.browserZoom === defaultSettings.browserZoom
+    && state.settings.browserFullscreenMode === defaultSettings.browserFullscreenMode;
   updateBrowserSetupAction(
     elements.inspectorBody.querySelector('[data-browser-action="reset-pane-view"]'),
     browserPaneViewDefault,
-    browserPaneViewDefault ? "Browser pane chrome and zoom already use defaults." : "Reset browser pane chrome and zoom to defaults.",
-    `browser pane chrome zoom reset default full 100 ${browserPaneViewDefault ? "active current " : ""}`
+    browserPaneViewDefault ? "Browser pane chrome, zoom, and fullscreen behavior already use defaults." : "Reset browser pane chrome, zoom, and fullscreen behavior to defaults.",
+    `browser pane chrome zoom fullscreen reset default full 100 ${browserPaneViewDefault ? "active current " : ""}`
   );
 
   const browserSetupDefault = browserSetupSettingsAreDefault();
   updateBrowserSetupAction(
     elements.inspectorBody.querySelector('[data-browser-action="reset-setup"]'),
     browserSetupDefault,
-    browserSetupDefault ? "Browser setup already uses defaults." : "Reset browser home, launch mode, external profile, inactive-pane suspension, pane chrome, and zoom to defaults.",
-    `browser setup reset default home launch external profile suspend pane chrome zoom ${browserSetupDefault ? "active current " : ""}`
+    browserSetupDefault ? "Browser setup already uses defaults." : "Reset browser home, launch mode, external profile, inactive-pane suspension, pane chrome, zoom, and fullscreen behavior to defaults.",
+    `browser setup reset default home launch external profile suspend pane chrome zoom fullscreen ${browserSetupDefault ? "active current " : ""}`
   );
 }
 
@@ -22376,7 +22997,7 @@ function workspaceTerminalBackgroundSettingsPanel(workspace = activeWorkspace())
   control.innerHTML = `
     <button class="workspace-background-preview" type="button"></button>
     <span class="workspace-background-status">
-      <b>All terminals</b>
+      <b>All terminals + new</b>
       <em></em>
     </span>
     <span class="settings-actions workspace-background-actions"></span>
@@ -22386,7 +23007,7 @@ function workspaceTerminalBackgroundSettingsPanel(workspace = activeWorkspace())
     ? "Mixed backgrounds"
     : model.hasBackground
       ? appearanceBackgroundLabel(model.background)
-      : chooseModel.hasTerminalPanes ? "No terminal backgrounds" : "Open a terminal pane first";
+      : chooseModel.hasTerminalPanes ? "No terminal backgrounds" : "No new-terminal background";
   status.title = model.source;
   status.querySelector("em").textContent = statusValue;
 
@@ -22638,7 +23259,11 @@ function paneSetupPayload(panel = focusedPanel() || activePanel()) {
     color: target.color || ""
   };
   if (target.type === "terminal") {
+    const colorOverrides = terminalPanelColorOverrides(target);
     settings.backgroundImage = normalizeBackgroundValue(target.backgroundImage);
+    settings.terminalBackground = colorOverrides.terminalBackground;
+    settings.terminalForeground = colorOverrides.terminalForeground;
+    settings.terminalCursorColor = colorOverrides.terminalCursorColor;
     settings.terminalFontSize = normalizeTerminalFontSize(target.terminalFontSize, 0);
   } else if (target.type === "browser") {
     settings.url = browserPanelUrl(target) || target.url || state.settings.browserHomeUrl;
@@ -22651,6 +23276,7 @@ function paneSetupPayload(panel = focusedPanel() || activePanel()) {
       name: titleLocked ? settings.title : "Automatic",
       color: settings.color || "Default",
       background: target.type === "terminal" ? appearanceBackgroundLabel(settings.backgroundImage) : "",
+      colors: target.type === "terminal" ? terminalPaneColorSummary(settings) : "",
       text: target.type === "terminal"
         ? (settings.terminalFontSize ? `${settings.terminalFontSize}px` : "Default")
         : "",
@@ -22721,6 +23347,12 @@ function paneSetupTerminalFontSizeUpdateFromValue(raw) {
   return value <= 0 ? 0 : normalizeTerminalFontSize(value, state.settings.terminalFontSize);
 }
 
+function paneSetupTerminalColorUpdateFromValue(raw) {
+  if (raw === null || raw === "") return "";
+  if (typeof raw !== "string") return null;
+  return normalizeTerminalColor(raw) || null;
+}
+
 function paneSetupUrlUpdateFromValue(raw) {
   if (raw === null || raw === "") return state.settings.browserHomeUrl;
   if (typeof raw !== "string") return null;
@@ -22747,6 +23379,12 @@ function paneSetupUpdatesFromPayload(payload, panel = focusedPanel() || activePa
       const backgroundImage = paneSetupBackgroundUpdateFromValue(source.backgroundImage);
       if (backgroundImage === null) return null;
       updates.backgroundImage = backgroundImage;
+    }
+    for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"]) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const color = paneSetupTerminalColorUpdateFromValue(source[key]);
+      if (color === null) return null;
+      updates[key] = color;
     }
     if (Object.prototype.hasOwnProperty.call(source, "terminalFontSize")) {
       const terminalFontSize = paneSetupTerminalFontSizeUpdateFromValue(source.terminalFontSize);
@@ -22847,6 +23485,7 @@ function paneLookPayload(panel = focusedPanel() || activePanel()) {
       kind: target.type === "browser" ? "Browser" : "Terminal",
       color: settings.color || "Default",
       background: target.type === "terminal" ? appearanceBackgroundLabel(settings.backgroundImage) : "",
+      colors: target.type === "terminal" ? terminalPaneColorSummary(settings) : "",
       text: target.type === "terminal"
         ? (settings.terminalFontSize ? `${settings.terminalFontSize}px` : "Default")
         : ""
@@ -22894,6 +23533,12 @@ function paneLookUpdatesFromPayload(payload, panel = focusedPanel() || activePan
       const backgroundImage = paneSetupBackgroundUpdateFromValue(source.backgroundImage);
       if (backgroundImage === null) return null;
       updates.backgroundImage = backgroundImage;
+    }
+    for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"]) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const color = paneSetupTerminalColorUpdateFromValue(source[key]);
+      if (color === null) return null;
+      updates[key] = color;
     }
     if (Object.prototype.hasOwnProperty.call(source, "terminalFontSize")) {
       const terminalFontSize = paneSetupTerminalFontSizeUpdateFromValue(source.terminalFontSize);
@@ -23023,6 +23668,9 @@ function paneSetupResetUpdates(panel = focusedPanel() || activePanel()) {
   };
   if (target.type === "terminal") {
     updates.backgroundImage = "";
+    updates.terminalBackground = "";
+    updates.terminalForeground = "";
+    updates.terminalCursorColor = "";
     updates.terminalFontSize = 0;
   }
   return updates;
@@ -23039,7 +23687,7 @@ function paneSetupResetTitle(panel = focusedPanel() || activePanel()) {
   if (!target) return "Open a pane before resetting setup.";
   if (paneSetupResetIsDefault(target)) return "Pane setup already uses defaults.";
   return target.type === "terminal"
-    ? "Reset the pane name, marker color, background, and text size."
+    ? "Reset the pane name, marker color, background, terminal colors, and text size."
     : "Reset the pane name and marker color without changing the current page.";
 }
 
@@ -23066,7 +23714,11 @@ function paneLookSyncUpdates(panel = focusedPanel() || activePanel()) {
     color: target.color || ""
   };
   if (target.type === "terminal") {
+    const colorOverrides = terminalPanelColorOverrides(target);
     updates.backgroundImage = normalizeBackgroundValue(target.backgroundImage);
+    updates.terminalBackground = colorOverrides.terminalBackground;
+    updates.terminalForeground = colorOverrides.terminalForeground;
+    updates.terminalCursorColor = colorOverrides.terminalCursorColor;
     updates.terminalFontSize = normalizeTerminalFontSize(target.terminalFontSize, 0);
   }
   return updates;
@@ -23711,13 +24363,15 @@ function activePaneBaseSearchText(panel = activePaneActionTargetPanel()) {
       ? browserPanelUrl(target) || target.url || state.settings.browserHomeUrl
       : target.cwdShort || target.cwd || "~";
   const background = target?.type === "terminal" ? appearanceBackgroundLabel(target.backgroundImage) : "";
+  const terminalColors = target?.type === "terminal" ? terminalPaneColorSummary(terminalPanelColorOverrides(target)) : "";
   const textSize = target?.type === "terminal" ? `${terminalFontSizeForPanel(target)}px` : "";
   return [
-    "active pane setup look rename color background text url terminal browser tab",
+    "active pane setup look rename color background terminal colors text url terminal browser tab",
     title,
     kind,
     location,
     background,
+    terminalColors,
     textSize
   ].join(" ");
 }
@@ -23742,14 +24396,14 @@ function activePaneSettingsActionShortcut(commandId) {
 function activePaneLookCopyTitle(panel = activePaneActionTargetPanel()) {
   const target = activePaneActionTargetPanel(panel);
   return target?.type === "terminal"
-    ? "Copy active pane marker color, background, and text size as JSON."
+    ? "Copy active pane marker color, background, terminal colors, and text size as JSON."
     : "Copy active browser pane marker color as JSON.";
 }
 
 function activePaneLookPasteTitle(panel = activePaneActionTargetPanel()) {
   const target = activePaneActionTargetPanel(panel);
   return target?.type === "terminal"
-    ? "Paste copied pane color, background, and text size without renaming the pane."
+    ? "Paste copied pane color, background, terminal colors, and text size without renaming the pane."
     : "Paste copied pane color without renaming the pane or changing its URL.";
 }
 
@@ -23782,10 +24436,10 @@ function activePaneSettingsActionSearchText(commandId, panel = activePaneActionT
     "settings.useSuggestedPaneName": "use suggested folder host cwd directory generated name",
     "settings.usePanePageTitle": "use browser page title document tab title name",
     "settings.resetPaneName": "default automatic generated reset clear title name",
-    "settings.copyPaneSetup": "copy setup export clipboard json title color background text url",
-    "settings.pastePaneSetup": "paste setup import clipboard json title color background text url",
-    "settings.copyPaneLook": "copy look export clipboard json color background text",
-    "settings.pastePaneLook": "paste look import clipboard json color background text no rename no url",
+    "settings.copyPaneSetup": "copy setup export clipboard json title color background terminal colors text url",
+    "settings.pastePaneSetup": "paste setup import clipboard json title color background terminal colors text url",
+    "settings.copyPaneLook": "copy look export clipboard json color background terminal colors text",
+    "settings.pastePaneLook": "paste look import clipboard json color background terminal colors text no rename no url",
     "settings.savePaneLook": "save look reusable palette library color background",
     "settings.resetPaneSetup": "reset default setup title color background text size",
     "settings.syncPaneLook": "sync look matching panes color background text"
@@ -24182,6 +24836,58 @@ function activePaneSettingsPanel(workspace = activeWorkspace()) {
       }
     };
     wrapper.append(fontRow);
+    const colorOverrides = terminalPanelColorOverrides(panel);
+    const paneColorControl = (settingKey, field, label, fallbackColor, searchTerms) => terminalColorControlPanel({
+      settingKey,
+      field,
+      label,
+      fallbackColor,
+      activeColor: colorOverrides[settingKey] || fallbackColor,
+      onPick: (color) => updatePanel(panel.id, { [settingKey]: color }),
+      onClear: () => updatePanel(panel.id, { [settingKey]: "" }),
+      clearDisabled: !colorOverrides[settingKey],
+      clearTitle: colorOverrides[settingKey]
+        ? `Use the global ${label.toLowerCase()} color for this pane.`
+        : `This pane already uses the global ${label.toLowerCase()} color.`,
+      targetMeta: colorOverrides[settingKey] ? "Pane override" : "Uses global default",
+      searchTerms
+    });
+    wrapper.append(settingRow(
+      "Pane terminal background",
+      paneColorControl(
+        "terminalBackground",
+        "background",
+        "Pane terminal background",
+        state.settings.terminalBackground || terminalColorDefaults.background,
+        "active pane terminal background color override custom hex palette copy save reset default"
+      ),
+      true,
+      "active pane terminal background color override custom hex palette copy save reset default"
+    ));
+    wrapper.append(settingRow(
+      "Pane terminal text",
+      paneColorControl(
+        "terminalForeground",
+        "foreground",
+        "Pane terminal text",
+        state.settings.terminalForeground || terminalColorDefaults.foreground,
+        "active pane terminal foreground text color override custom hex palette copy save reset default"
+      ),
+      true,
+      "active pane terminal foreground text color override custom hex palette copy save reset default"
+    ));
+    wrapper.append(settingRow(
+      "Pane terminal cursor",
+      paneColorControl(
+        "terminalCursorColor",
+        "cursor",
+        "Pane terminal cursor",
+        state.settings.terminalCursorColor || state.settings.accent || terminalColorDefaults.cursor,
+        "active pane terminal cursor color override custom hex palette copy save reset default"
+      ),
+      true,
+      "active pane terminal cursor color override custom hex palette copy save reset default"
+    ));
   } else {
     const urlInput = document.createElement("input");
     urlInput.className = "setting-control";
@@ -24511,6 +25217,13 @@ function setSettingsSearchLayoutNeeded(needed) {
   for (const host of elements.inspectorBody.querySelectorAll(".settings-react-host")) {
     host.classList.toggle("is-searching", searching);
     host.classList.toggle("is-search-layout-needed", searching && needed);
+  }
+}
+
+function setSettingsScrollLayoutNeeded(needed) {
+  if (!elements.inspectorBody) return;
+  for (const host of elements.inspectorBody.querySelectorAll(".settings-react-host")) {
+    host.classList.toggle("is-scroll-layout-needed", Boolean(needed));
   }
 }
 
@@ -27085,6 +27798,9 @@ async function applyAndSaveCleanFastProfile() {
   }
   const preset = settingsPresetById("simpleFast");
   const changed = preset ? updateSettings(preset.settings) : false;
+  const clearedCount = preset
+    ? await clearTerminalColorOverridesForUpdates(preset.settings, { render: false, refreshSettings: false })
+    : 0;
   const label = await showTextDialog({
     title: "Save clean + fast setup",
     message: "Apply the clean speed preset now, then save it as a reusable Settings profile.",
@@ -27093,7 +27809,7 @@ async function applyAndSaveCleanFastProfile() {
     confirmLabel: "Save"
   });
   if (!label) {
-    if (changed) {
+    if (changed || clearedCount) {
       refreshSettingsPresetApplicationSettings();
       toast("Clean + fast settings applied.");
     }
@@ -27852,12 +28568,23 @@ function quickBrowserControlsPanel(workspace = activeWorkspace(), browserCount =
   const saveSetupTitle = profilesFull
     ? settingsProfileLimitTitle()
     : "Save the current browser setup as a reusable Settings profile.";
-  const actions = [
-    quickOverviewControlButton("Open home", () => createPanel("browser", newPaneDirection(), { workspaceId: workspace?.id, url: state.settings.browserHomeUrl }), {
+  const openHomeControl = attachBrowserPanePlacementMenu(
+    quickOverviewControlButton("Open home", () => createBrowserPanel(newPaneDirection(), { workspaceId: workspace?.id, url: state.settings.browserHomeUrl }), {
       disabled: !hasWorkspace,
-      title: hasWorkspace ? "Open the browser home page in this workspace." : workspaceRequiredTitle,
-      search: "quick setup browser open home page pane web chrome"
+      title: hasWorkspace
+        ? `${paneCreationActionTitle("Open the browser home page in this workspace.", newPanePlacementHint())} Right-click to choose right or below.`
+        : workspaceRequiredTitle,
+      search: "quick setup browser open home page pane web chrome right below split placement"
     }),
+    () => ({
+      title: "Open browser home",
+      workspace,
+      workspaceId: workspace?.id,
+      url: state.settings.browserHomeUrl
+    })
+  );
+  const actions = [
+    openHomeControl,
     quickOverviewControlButton("Cycle home", () => refreshQuickSettingsAfterAction(cycleBrowserHomePreset({ render: false })), {
       disabled: homeCycle.disabled,
       title: homeCycle.title,
@@ -27966,7 +28693,7 @@ function quickRecentBrowserPageControlsPanel(workspace = activeWorkspace()) {
     const pageUrl = normalizeBrowserPageUrl(url);
     const pageHost = hostnameOf(pageUrl) || pageUrl;
     const disabled = !pageUrl || !hasWorkspace || paneQueueFull;
-    return quickOverviewControlButton(pageHost, () => createPanel("browser", newPaneDirection(), {
+    const button = quickOverviewControlButton(pageHost, () => createBrowserPanel(newPaneDirection(), {
       workspaceId: workspace?.id,
       url: pageUrl
     }), {
@@ -27977,9 +28704,15 @@ function quickRecentBrowserPageControlsPanel(workspace = activeWorkspace()) {
           ? "Open a workspace before opening recent browser pages."
           : paneQueueFull
             ? paneCreationLimitLabel()
-            : `Open ${pageHost} in a new browser pane.`,
-      search: normalizeSettingsQuery(`quick setup recent browser page open web url history ${disabled ? "unavailable " : "ready "}${pageHost} ${pageUrl} ${workspaceTitle} ${paneQueueLabel}`)
+            : `${paneCreationActionTitle(`Open ${pageHost} in a new browser pane.`, newPanePlacementHint())} Right-click to choose right or below.`,
+      search: normalizeSettingsQuery(`quick setup recent browser page open web url history right below split placement ${disabled ? "unavailable " : "ready "}${pageHost} ${pageUrl} ${workspaceTitle} ${paneQueueLabel}`)
     });
+    return attachBrowserPanePlacementMenu(button, () => ({
+      title: `Open ${pageHost}`,
+      workspace,
+      workspaceId: workspace?.id,
+      url: pageUrl
+    }));
   });
   if (hiddenPageCount > 0) {
     actions.push(quickOverviewControlButton("More", () => openSettingsCategory("browser", { query: "recent pages", focusSearch: false }), {
@@ -28456,8 +29189,7 @@ function quickBackgroundControlsPanel(workspace = activeWorkspace()) {
     ? "Focus a terminal pane before choosing its background."
     : `Choose a background image for ${paneOption.meta}.`;
   const allChoose = workspaceTerminalBackgroundActionModel("choose", workspace, {
-    availableTitle: `Choose one background image for ${allOption.meta}.`,
-    noTerminalTitle: "Open a terminal pane before choosing all terminal backgrounds."
+    availableTitle: `Choose one background image for ${allOption.meta}.`
   });
   const actions = [
     quickOverviewControlButton("Choose app", () => refreshQuickSettingsAfterAction(chooseBackgroundImageForTarget({ target: "app", render: false })), {
@@ -28478,7 +29210,7 @@ function quickBackgroundControlsPanel(workspace = activeWorkspace()) {
       title: paneTitle,
       search: `quick setup background active terminal pane image choose wallpaper ${paneOption.meta}`
     }),
-    quickOverviewControlButton("All terminals", () => refreshQuickSettingsAfterAction(chooseWorkspaceTerminalBackground(workspace, { render: false })), {
+    quickOverviewControlButton("Terminals + new", () => refreshQuickSettingsAfterAction(chooseWorkspaceTerminalBackground(workspace, { render: false })), {
       disabled: allChoose.disabled,
       title: allChoose.title,
       search: `quick setup background ${allChoose.search} ${allOption.meta}`
@@ -29040,7 +29772,7 @@ function quickSetupOverviewPanel(storageEntries = dataStorageEntries()) {
           </button>
           <button class="quick-overview-scope-item" type="button" data-quick-scope-item="all">
             <span class="quick-overview-scope-preview" aria-hidden="true"></span>
-            <span class="quick-overview-scope-copy"><b>All terminals</b><em data-quick-scope-all></em></span>
+            <span class="quick-overview-scope-copy"><b>Terminals + new</b><em data-quick-scope-all></em></span>
           </button>
         </div>
         <div class="quick-overview-library" data-quick-library>
@@ -29935,7 +30667,7 @@ function quickSetupActionDefinitions() {
       id: "background-everywhere",
       icon: "background",
       label: "Image everywhere",
-      body: "Apply the current image to the app and terminal panes.",
+      body: "Apply the current image to the app, terminal panes, and new terminals.",
       meta: () => currentBackgroundEverywhereModel().meta,
       cta: "Apply",
       active: () => currentBackgroundEverywhereModel().active,
@@ -29992,17 +30724,17 @@ function quickSetupActionDefinitions() {
     {
       id: "all-terminal-backgrounds",
       icon: "terminalGroup",
-      label: "All terminal image",
-      body: "Choose one image for every terminal in this workspace.",
+      label: "Terminals + new image",
+      body: "Choose one image for terminal panes and future terminals.",
       meta: () => {
         const workspace = activeWorkspace();
         const count = workspaceTerminalPanels(workspace).length;
-        return count ? `${count} terminal${count === 1 ? "" : "s"}` : "No terminals";
+        return count ? `${count} terminal${count === 1 ? "" : "s"} + new` : "New terminals";
       },
       cta: "Choose",
-      search: "all terminal pane background image choose local file wallpaper workspace",
-      disabled: () => workspaceTerminalPanels().length === 0,
-      disabledTitle: () => "Open a terminal pane before setting terminal images.",
+      search: "all terminal pane new future background image choose local file wallpaper workspace",
+      disabled: () => false,
+      disabledTitle: () => "",
       run: () => refreshQuickSettingsAfterAction(chooseBackgroundImageForTarget({ target: "all", render: false }))
     },
     {
@@ -32568,6 +33300,19 @@ function refreshTerminalCursorBlinkControls() {
   return changed;
 }
 
+function refreshTerminalMultilinePasteControls() {
+  let changed = false;
+  for (const input of elements.inspectorBody.querySelectorAll('[data-setting-control="terminalConfirmMultilinePaste"]')) {
+    if (input.checked !== state.settings.terminalConfirmMultilinePaste) {
+      input.checked = state.settings.terminalConfirmMultilinePaste;
+      changed = true;
+    }
+    const label = input.closest(".setting-toggle")?.querySelector("span");
+    if (label) changed = setTextIfChanged(label, state.settings.terminalConfirmMultilinePaste ? "On" : "Off") || changed;
+  }
+  return changed;
+}
+
 function terminalProfileSettingRow() {
   const profileSelect = document.createElement("select");
   profileSelect.className = "setting-select";
@@ -32684,7 +33429,7 @@ function refreshTerminalSetupActions() {
   updateTerminalSetupAction(
     elements.inspectorBody.querySelector('[data-terminal-action="reset-colors"]'),
     terminalColorsReset,
-    terminalColorsReset ? "Terminal colors already match the cmux default." : "Reset background, text, and cursor colors to the cmux default.",
+    terminalColorsReset ? "Terminal colors already match the cmux default for all terminals + new." : "Reset background, text, and cursor colors to the cmux default for all terminals + new.",
     `terminal color reset default background foreground cursor ${terminalColorsReset ? "active current " : ""}`
   );
 
@@ -32752,6 +33497,7 @@ function refreshTerminalSettingsPreview() {
   refreshTerminalRangeControl("terminalPadding", (value) => `Padding ${value}px`);
   refreshTerminalRangeControl("terminalScrollback", (value) => `Scrollback ${value}`);
   refreshTerminalCursorBlinkControls();
+  refreshTerminalMultilinePasteControls();
   refreshTerminalSetupActions();
   refreshTerminalReadabilityPresetGrid();
   refreshTerminalColorPresetGrid();
@@ -32803,6 +33549,11 @@ function refreshTerminalColorSettings(options = {}) {
   if (options.render === false || state.inspectorMode !== "settings") return;
   if (state.settingsCategory === "terminal" && !normalizeSettingsQuery(state.settingsQuery)) {
     scheduleTerminalSettingsPreviewRefresh();
+    requestAnimationFrame(() => {
+      if (state.inspectorMode !== "settings" || state.settingsCategory !== "terminal") return;
+      refreshTerminalColorPresetGrid();
+      refreshTerminalSetupActions();
+    });
     return;
   }
   scheduleSettingsInspectorRender({ ifChanged: true });
@@ -33706,6 +34457,13 @@ function activeTerminalPanelForSettings() {
   return resolveTerminalPanel(focusedPanel()) || resolveTerminalPanel(activePanel());
 }
 
+function terminalCreationBackgroundImage(options = {}, workspace = activeWorkspace()) {
+  if (Object.hasOwn(options, "backgroundImage")) return normalizeBackgroundValue(options.backgroundImage);
+  const defaultBackground = terminalDefaultBackgroundImage();
+  if (defaultBackground) return defaultBackground;
+  return workspaceTerminalBackgroundState(workspace).sharedBackground || "";
+}
+
 function activeTerminalRunTarget() {
   const panel = activeTerminalPanelForSettings();
   return {
@@ -33719,9 +34477,21 @@ function panelBackgroundMatches(panel, value) {
   return normalizeBackgroundValue(panel?.backgroundImage) === normalizeBackgroundValue(value);
 }
 
-function terminalBackgroundsMatch(workspace, value) {
+function terminalDefaultBackgroundImage() {
+  return normalizeBackgroundValue(state.settings.terminalBackgroundImage);
+}
+
+function terminalPaneBackgroundsMatch(workspace, value) {
   const terminals = workspaceTerminalPanels(workspace);
   return terminals.length > 0 && terminals.every((panel) => panelBackgroundMatches(panel, value));
+}
+
+function terminalBackgroundsMatch(workspace, value) {
+  const normalized = normalizeBackgroundValue(value);
+  const terminals = workspaceTerminalPanels(workspace);
+  const defaultMatches = terminalDefaultBackgroundImage() === normalized;
+  if (terminals.length === 0) return defaultMatches;
+  return defaultMatches && terminals.every((panel) => panelBackgroundMatches(panel, normalized));
 }
 
 function backgroundEverywhereApplyModel(value, label = "Background", workspace = activeWorkspace()) {
@@ -33729,11 +34499,11 @@ function backgroundEverywhereApplyModel(value, label = "Background", workspace =
   const terminalCount = workspaceTerminalPanels(workspace).length;
   const hasTerminalPanes = terminalCount > 0;
   const appActive = Boolean(background && normalizeBackgroundValue(state.settings.backgroundImage) === normalizeBackgroundValue(background));
-  const allTerminalsActive = hasTerminalPanes ? terminalBackgroundsMatch(workspace, background) : true;
+  const allTerminalsActive = terminalBackgroundsMatch(workspace, background);
   const active = Boolean(background && appActive && allTerminalsActive);
   const targetLabel = hasTerminalPanes
-    ? `the app and ${terminalCount} terminal pane${terminalCount === 1 ? "" : "s"}`
-    : "the whole app";
+    ? `the app, ${terminalCount} terminal pane${terminalCount === 1 ? "" : "s"}, and new terminals`
+    : "the app and new terminals";
   if (!background) {
     return {
       background,
@@ -33756,7 +34526,7 @@ function backgroundEverywhereApplyModel(value, label = "Background", workspace =
     allTerminalsActive,
     active,
     disabled: active,
-    meta: hasTerminalPanes ? `App + ${terminalCount} terminal${terminalCount === 1 ? "" : "s"}` : "Whole app",
+    meta: hasTerminalPanes ? `App + ${terminalCount} terminal${terminalCount === 1 ? "" : "s"} + new` : "App + new terminals",
     title: active
       ? `${label} already applies to ${targetLabel}.`
       : `Apply ${label} to ${targetLabel}.`,
@@ -33827,21 +34597,18 @@ async function applyBackgroundValueEverywhere(value, options = {}) {
     toast(`${label} background could not be applied.`);
     return null;
   }
-  let terminalsChanged = false;
-  if (model.hasTerminalPanes) {
-    terminalsChanged = await applyWorkspaceBackgroundImageToTerminals(validated.url, workspace, { render: false, toast: false });
-    if (terminalsChanged === null) {
-      if (appChanged) refreshBackgroundApplicationSettings(options);
-      toast(`${label} could not be applied to terminal panes.`);
-      return Boolean(appChanged);
-    }
+  const terminalsChanged = await applyWorkspaceBackgroundImageToTerminals(validated.url, workspace, { render: false, toast: false });
+  if (terminalsChanged === null) {
+    if (appChanged) refreshBackgroundApplicationSettings(options);
+    toast(`${label} could not be applied to terminal backgrounds.`);
+    return Boolean(appChanged);
   }
   const changed = Boolean(appChanged || terminalsChanged);
   if (changed) refreshBackgroundApplicationSettings(options);
   if (changed) {
     toast(model.hasTerminalPanes
-      ? `${label} applied to app and terminal panes.`
-      : `${label} applied to app.`);
+      ? `${label} applied to app, terminal panes, and new terminals.`
+      : `${label} applied to app and new terminals.`);
   } else {
     toast(model.title);
   }
@@ -33861,79 +34628,83 @@ function workspaceTerminalBackgroundState(workspace = activeWorkspace(), appBack
   const terminals = workspaceTerminalPanels(workspace);
   const terminalCount = terminals.length;
   const normalizedAppBackground = normalizeBackgroundValue(appBackground);
+  const defaultBackground = terminalDefaultBackgroundImage();
   const terminalBackgrounds = terminals.map((panel) => normalizeBackgroundValue(panel.backgroundImage));
   const nonEmptyBackgrounds = terminalBackgrounds.filter(Boolean);
   const uniqueBackgrounds = [...new Set(nonEmptyBackgrounds)];
   const sharedBackground = uniqueBackgrounds.length === 1 && nonEmptyBackgrounds.length === terminalCount
     ? uniqueBackgrounds[0]
     : "";
-  const matches = (value) => terminalCount > 0 && terminals.every((panel) => panelBackgroundMatches(panel, value));
+  const effectiveBackground = sharedBackground || defaultBackground;
+  const matches = (value) => terminalBackgroundsMatch(workspace, value);
+  const paneMatches = (value) => terminalPaneBackgroundsMatch(workspace, value);
+  const mixedBackgrounds = Boolean(!sharedBackground && uniqueBackgrounds.length > 0)
+    || Boolean(sharedBackground && defaultBackground && sharedBackground !== defaultBackground);
   return {
     terminals,
     terminalCount,
     hasTerminalPanes: terminalCount > 0,
     appBackground: normalizedAppBackground,
+    defaultBackground,
     sharedBackground,
-    mixedBackgrounds: Boolean(!sharedBackground && uniqueBackgrounds.length > 0),
-    allMeta: terminalCount ? `${terminalCount} terminal${terminalCount === 1 ? "" : "s"}` : "No terminals",
+    effectiveBackground,
+    mixedBackgrounds,
+    allMeta: terminalCount ? `${terminalCount} terminal${terminalCount === 1 ? "" : "s"} + new` : "New terminals",
     useAppActive: Boolean(normalizedAppBackground && matches(normalizedAppBackground)),
-    useAsAppActive: Boolean(sharedBackground && normalizedAppBackground === sharedBackground),
-    clearActive: matches("")
+    useAsAppActive: Boolean(effectiveBackground && !mixedBackgrounds && normalizedAppBackground === effectiveBackground),
+    clearActive: matches(""),
+    paneClearActive: paneMatches("")
   };
 }
 
 function workspaceTerminalBackgroundActionTitle(actionId, workspace = activeWorkspace(), options = {}) {
   const model = workspaceTerminalBackgroundState(workspace, options.appBackground ?? state.settings.backgroundImage);
-  const terminalRequiredTitle = options.terminalRequiredTitle || "Open a terminal pane first.";
-  const noTerminalTitle = options.noTerminalTitle || terminalRequiredTitle;
-  const sharedRequiredTitle = options.sharedRequiredTitle || "Set one shared terminal background first.";
+  const sharedRequiredTitle = options.sharedRequiredTitle || "Set one shared terminal background or new-terminal default first.";
   if (actionId === "choose") {
     return model.hasTerminalPanes
-      ? options.availableTitle || "Choose an image for every terminal pane in this workspace."
-      : noTerminalTitle;
+      ? options.availableTitle || "Choose an image for every terminal pane and new terminal."
+      : options.availableTitle || "Choose an image for new terminals.";
   }
   if (actionId === "paste") {
     return model.hasTerminalPanes
-      ? options.availableTitle || "Paste an image URL, path, or copied image for every terminal pane in this workspace."
-      : noTerminalTitle;
+      ? options.availableTitle || "Paste an image URL, path, or copied image for every terminal pane and new terminal."
+      : options.availableTitle || "Paste an image URL, path, or copied image for new terminals.";
   }
   if (actionId === "useApp") {
-    if (!model.hasTerminalPanes) return noTerminalTitle;
     if (!model.appBackground) return options.noAppTitle || "Choose an app background first.";
-    if (model.useAppActive) return options.activeTitle || "All terminal panes already use the app background.";
-    return options.availableTitle || "Apply the app background to every terminal pane.";
+    if (model.useAppActive) return options.activeTitle || "Terminal panes and new terminals already use the app background.";
+    return options.availableTitle || "Apply the app background to terminal panes and new terminals.";
   }
   if (actionId === "useAsApp") {
-    const sharedBackground = normalizeBackgroundValue(options.background ?? model.sharedBackground);
-    if (!model.hasTerminalPanes) return noTerminalTitle;
+    const sharedBackground = normalizeBackgroundValue(options.background ?? model.effectiveBackground);
     if (!sharedBackground) return sharedRequiredTitle;
+    if (model.mixedBackgrounds) return "Terminal panes and the new-terminal default are mixed. Choose one shared terminal background first.";
     if (model.useAsAppActive) return options.activeTitle || "The app already uses the shared terminal background.";
     return options.availableTitle || "Use the shared terminal background for the whole app.";
   }
   if (actionId === "save") {
-    const sharedBackground = normalizeBackgroundValue(options.background ?? model.sharedBackground);
-    if (!model.hasTerminalPanes) return noTerminalTitle;
+    const sharedBackground = normalizeBackgroundValue(options.background ?? model.effectiveBackground);
     if (!sharedBackground) return sharedRequiredTitle;
+    if (model.mixedBackgrounds) return "Terminal panes and the new-terminal default are mixed. Choose one shared terminal background first.";
     return savedBackgroundImageSaveTitle(sharedBackground, options.availableTitle || "Save the shared terminal background image.");
   }
   if (actionId === "copySource") {
-    const sharedBackground = normalizeBackgroundValue(options.background ?? model.sharedBackground);
-    if (!model.hasTerminalPanes) return noTerminalTitle;
+    const sharedBackground = normalizeBackgroundValue(options.background ?? model.effectiveBackground);
     if (!sharedBackground) return sharedRequiredTitle;
+    if (model.mixedBackgrounds) return "Terminal panes and the new-terminal default are mixed. Choose one shared terminal background first.";
     return backgroundImageCopyTitle(sharedBackground, options.availableTitle || "Copy the shared terminal background source.");
   }
   if (actionId === "openSource") {
-    const sharedBackground = normalizeBackgroundValue(options.background ?? model.sharedBackground);
-    if (!model.hasTerminalPanes) return noTerminalTitle;
+    const sharedBackground = normalizeBackgroundValue(options.background ?? model.effectiveBackground);
     if (!sharedBackground) return sharedRequiredTitle;
+    if (model.mixedBackgrounds) return "Terminal panes and the new-terminal default are mixed. Choose one shared terminal background first.";
     return backgroundImageOpenTitle(sharedBackground, options.availableTitle || "Open the shared terminal background source.");
   }
   if (actionId === "clear") {
-    if (!model.hasTerminalPanes) return noTerminalTitle;
-    if (model.clearActive) return options.emptyTitle || "Terminal pane backgrounds are already clear.";
-    return options.availableTitle || "Clear every terminal pane background.";
+    if (model.clearActive) return options.emptyTitle || "Terminal backgrounds and new-terminal default are already clear.";
+    return options.availableTitle || "Clear every terminal pane background and the new-terminal default.";
   }
-  return options.availableTitle || "Update every terminal pane background in this workspace.";
+  return options.availableTitle || "Update terminal pane backgrounds and the new-terminal default.";
 }
 
 function workspaceTerminalBackgroundActionSearchText(actionId, workspace = activeWorkspace(), extra = "") {
@@ -33954,6 +34725,7 @@ function workspaceTerminalBackgroundActionSearchText(actionId, workspace = activ
     "workspace all terminals terminal panes background image wallpaper",
     model.allMeta,
     model.appBackground ? `app background ${appearanceBackgroundLabel(model.appBackground)} ${model.appBackground}` : "no app background",
+    model.defaultBackground ? `new terminal default ${appearanceBackgroundLabel(model.defaultBackground)} ${model.defaultBackground}` : "no new terminal default",
     sharedBackground ? `shared terminal background ${appearanceBackgroundLabel(sharedBackground)} ${sharedBackground}` : "no shared terminal background",
     model.useAppActive ? "app background active current" : "",
     model.useAsAppActive ? "shared terminal background active app current" : "",
@@ -33965,48 +34737,48 @@ function workspaceTerminalBackgroundActionSearchText(actionId, workspace = activ
 
 function workspaceTerminalBackgroundActionModel(actionId, workspace = activeWorkspace(), options = {}) {
   const model = workspaceTerminalBackgroundState(workspace, options.appBackground ?? state.settings.backgroundImage);
-  let disabled = !model.hasTerminalPanes;
+  let disabled = false;
   let active = false;
   let meta = model.allMeta;
   if (actionId === "useApp") {
     active = model.useAppActive;
-    disabled = !model.hasTerminalPanes || !model.appBackground || model.useAppActive;
+    disabled = !model.appBackground || model.useAppActive;
     meta = model.useAppActive ? "App background active" : model.allMeta;
   } else if (actionId === "useAsApp") {
     active = model.useAsAppActive;
-    disabled = !model.hasTerminalPanes || !model.sharedBackground || model.useAsAppActive;
+    disabled = !model.effectiveBackground || model.mixedBackgrounds || model.useAsAppActive;
     meta = model.useAsAppActive
       ? "App uses terminal background"
-      : model.sharedBackground
-        ? appearanceBackgroundLabel(model.sharedBackground)
+      : model.effectiveBackground
+        ? appearanceBackgroundLabel(model.effectiveBackground)
         : model.mixedBackgrounds
           ? "Mixed terminal backgrounds"
           : model.allMeta;
   } else if (actionId === "save") {
-    disabled = !model.hasTerminalPanes || !canSaveBackgroundImage(model.sharedBackground);
-    meta = model.sharedBackground
-      ? appearanceBackgroundLabel(model.sharedBackground)
+    disabled = model.mixedBackgrounds || !canSaveBackgroundImage(model.effectiveBackground);
+    meta = model.effectiveBackground
+      ? appearanceBackgroundLabel(model.effectiveBackground)
       : model.mixedBackgrounds
         ? "Mixed terminal backgrounds"
         : model.allMeta;
   } else if (actionId === "copySource") {
-    disabled = !model.hasTerminalPanes || !canCopyBackgroundImageSource(model.sharedBackground);
-    meta = model.sharedBackground
-      ? appearanceBackgroundLabel(model.sharedBackground)
+    disabled = model.mixedBackgrounds || !canCopyBackgroundImageSource(model.effectiveBackground);
+    meta = model.effectiveBackground
+      ? appearanceBackgroundLabel(model.effectiveBackground)
       : model.mixedBackgrounds
         ? "Mixed terminal backgrounds"
         : model.allMeta;
   } else if (actionId === "openSource") {
-    disabled = !model.hasTerminalPanes || !canOpenBackgroundImageSource(model.sharedBackground);
-    meta = model.sharedBackground
-      ? appearanceBackgroundLabel(model.sharedBackground)
+    disabled = model.mixedBackgrounds || !canOpenBackgroundImageSource(model.effectiveBackground);
+    meta = model.effectiveBackground
+      ? appearanceBackgroundLabel(model.effectiveBackground)
       : model.mixedBackgrounds
         ? "Mixed terminal backgrounds"
         : model.allMeta;
   } else if (actionId === "clear") {
     active = model.clearActive;
-    disabled = !model.hasTerminalPanes || model.clearActive;
-    meta = model.clearActive ? "All terminal backgrounds clear" : model.allMeta;
+    disabled = model.clearActive;
+    meta = model.clearActive ? "Terminal backgrounds clear" : model.allMeta;
   }
   return {
     ...model,
@@ -34119,7 +34891,7 @@ function updateBackgroundPresetCard(card, preset, context = {}) {
   replaceBackgroundScopeChips(card.querySelector(".background-preset-scope"), [
     { label: "App", active: model.activeApp },
     { label: "Pane", active: model.activePane, muted: !model.activeTerminal },
-    { label: "All", active: model.activeAll, muted: !model.hasTerminalPanes }
+    { label: "All + new", active: model.activeAll, muted: false }
   ]);
   const applyAction = card.querySelector("[data-background-preset-action='apply']");
   if (applyAction) {
@@ -34207,7 +34979,7 @@ function backgroundPresetGrid() {
     replaceBackgroundScopeChips(scope, [
       { label: "App", active: model.activeApp },
       { label: "Pane", active: model.activePane, muted: !model.activeTerminal },
-      { label: "All", active: model.activeAll, muted: !hasTerminalPanes }
+      { label: hasTerminalPanes ? "All + new" : "New", active: model.activeAll, muted: false }
     ]);
 
     const actions = document.createElement("div");
@@ -34265,7 +35037,7 @@ function showBackgroundPresetMenu(event, preset) {
   const actions = contextMenuActionGroup(
     contextMenuButton(activeApp ? "App active" : "Apply to app", () => applyBackgroundPreset(preset, { toast: true }), activeApp),
     contextMenuButton(activePane ? "Terminal active" : "Apply to active terminal", () => applyBackgroundPresetToTarget(preset, "pane"), !activeTerminal || activePane),
-    contextMenuButton(activeAll ? "All terminals active" : "Apply to all terminals", () => applyBackgroundPresetToTarget(preset, "all"), !hasTerminalPanes || activeAll),
+    contextMenuButton(activeAll ? "Terminals + new active" : "Apply to terminals + new", () => applyBackgroundPresetToTarget(preset, "all"), activeAll),
     (() => {
       const action = contextMenuButton(everywhere.active ? "Everywhere active" : "Apply everywhere", () => applyBackgroundValueEverywhere(preset.value, { label: preset.label, workspace }), everywhere.disabled);
       action.title = everywhere.title;
@@ -34469,7 +35241,7 @@ function savedBackgroundImageTargetModel(background, context = {}) {
   const targetOption = context.targetOption || backgroundApplyTargetOption(target, workspace);
   const activeApp = savedBackgroundImageActiveForTarget(background, "app", workspace);
   const activePane = Boolean(activeTerminal && panelBackgroundMatches(activeTerminal, background.url));
-  const activeAll = hasTerminalPanes && terminalBackgroundsMatch(workspace, background.url);
+  const activeAll = terminalBackgroundsMatch(workspace, background.url);
   const activeEverywhere = backgroundEverywhereApplyModel(background.url, background.label, workspace);
   const activeTarget = target === "pane" ? activePane : target === "all" ? activeAll : activeApp;
   const targetDisabled = Boolean(targetOption.disabled) || activeTarget;
@@ -34532,7 +35304,7 @@ function updateSavedBackgroundImageCard(card, background, context = {}) {
     replaceBackgroundScopeChips(scope, [
       { label: "App", active: model.activeApp },
       { label: "Pane", active: model.activePane, muted: !model.activeTerminal },
-      { label: model.hasTerminalPanes ? `All ${model.terminalPanels.length}` : "All", active: model.activeAll, muted: !model.hasTerminalPanes }
+      { label: model.hasTerminalPanes ? `All ${model.terminalPanels.length} + new` : "New", active: model.activeAll, muted: false }
     ]);
   }
 
@@ -34847,7 +35619,7 @@ function savedBackgroundImagesPanel() {
     };
     addScopeChip("App", model.activeApp);
     addScopeChip("Pane", model.activePane, !model.activeTerminal);
-    addScopeChip(hasTerminalPanes ? `All ${terminalPanels.length}` : "All", model.activeAll, !hasTerminalPanes);
+    addScopeChip(hasTerminalPanes ? `All ${terminalPanels.length} + new` : "New", model.activeAll, false);
 
     const cardActions = document.createElement("div");
     cardActions.className = "saved-background-card-actions";
@@ -34900,7 +35672,7 @@ function showSavedBackgroundImageMenu(event, background) {
   applyApp.title = savedBackgroundImageApplyTitle(background, appTargetOption, activeApp);
   const applyPane = contextMenuButton(activePane ? "Terminal active" : "Apply to active terminal", () => applySavedBackgroundImageToPanel(background.id), !activeTerminal || activePane);
   applyPane.title = savedBackgroundImageApplyTitle(background, paneTargetOption, activePane);
-  const applyAll = contextMenuButton(activeAll ? "All terminals active" : "Apply to all terminals", () => applySavedBackgroundImageToWorkspaceTerminals(background.id), !hasTerminalPanes || activeAll);
+  const applyAll = contextMenuButton(activeAll ? "Terminals + new active" : "Apply to terminals + new", () => applySavedBackgroundImageToWorkspaceTerminals(background.id), activeAll);
   applyAll.title = savedBackgroundImageApplyTitle(background, allTargetOption, activeAll);
   const applyActions = contextMenuActionGroup(
     applyApp,
@@ -34986,7 +35758,7 @@ function terminalColorPresetBaseSearchText(preset) {
 function terminalColorPresetApplySearchText(preset, active = false) {
   return normalizeSettingsQuery([
     terminalColorPresetBaseSearchText(preset),
-    "apply use",
+    "apply use all terminals new global panes future clear pane overrides",
     active ? "active current unavailable already applied" : "ready available"
   ].join(" "));
 }
@@ -35021,7 +35793,64 @@ function terminalColorPresetSearchText(preset, active = false, savedProfile = nu
 function isActiveTerminalColorPreset(preset) {
   return state.settings.terminalBackground === preset.background
     && state.settings.terminalForeground === preset.foreground
-    && state.settings.terminalCursorColor === preset.cursor;
+    && state.settings.terminalCursorColor === preset.cursor
+    && !terminalPanelsWithColorOverrides().length;
+}
+
+const terminalColorSettingKeys = ["terminalBackground", "terminalForeground", "terminalCursorColor"];
+
+function terminalColorUpdateKeys(updates = {}) {
+  return terminalColorSettingKeys.filter((key) => Object.prototype.hasOwnProperty.call(updates, key));
+}
+
+function terminalPanelsWithColorOverrides(keys = terminalColorSettingKeys) {
+  return allPanels().filter((panel) => (
+    panel.type === "terminal"
+    && keys.some((key) => normalizeTerminalColor(panel[key]))
+  ));
+}
+
+function terminalColorOverridesMaskSettings(settings = {}) {
+  const keys = terminalColorUpdateKeys(settings);
+  return Boolean(keys.length && terminalPanelsWithColorOverrides(keys).length);
+}
+
+async function clearTerminalColorOverridesForUpdates(updates = {}, options = {}) {
+  const updateKeys = terminalColorUpdateKeys(updates);
+  if (!updateKeys.length) return 0;
+  const overridePanels = terminalPanelsWithColorOverrides(updateKeys);
+  if (!overridePanels.length) return 0;
+  const clearUpdates = Object.fromEntries(updateKeys.map((key) => [key, ""]));
+  await updatePanels(overridePanels.map((panel) => ({
+    panelId: panel.id,
+    updates: clearUpdates
+  })), {
+    render: false,
+    skipSettingsInspector: true
+  });
+  refreshVisiblePaneChromeState();
+  scheduleTerminalAppearanceRefresh();
+  if (options.refreshSettings !== false) refreshTerminalColorSettings({ render: options.render });
+  return overridePanels.length;
+}
+
+function effectiveTerminalColorsForPanel(panel = activeTerminalPanelForSettings()) {
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim()
+    || terminalColorDefaults.cursor;
+  const overrides = terminalPanelColorOverrides(panel);
+  return {
+    background: overrides.terminalBackground || state.settings.terminalBackground || terminalColorDefaults.background,
+    foreground: overrides.terminalForeground || state.settings.terminalForeground || terminalColorDefaults.foreground,
+    cursor: overrides.terminalCursorColor || state.settings.terminalCursorColor || accent
+  };
+}
+
+function isTerminalColorPresetActiveForPanel(preset, panel = activeTerminalPanelForSettings()) {
+  if (!preset || panel?.type !== "terminal") return false;
+  const colors = effectiveTerminalColorsForPanel(panel);
+  return colors.background === preset.background
+    && colors.foreground === preset.foreground
+    && colors.cursor === preset.cursor;
 }
 
 function isTerminalColorPresetIdActive(presetId) {
@@ -35031,12 +35860,31 @@ function isTerminalColorPresetIdActive(presetId) {
 
 function terminalColorPresetTitle(preset, active) {
   if (!preset) return "Choose a terminal color preset first.";
-  return active ? `${preset.label} terminal colors already active.` : preset.body;
+  return active
+    ? `${preset.label} terminal colors are already active for all terminals + new.`
+    : `${preset.body} Applies to all terminal panes and future panes; pane image backgrounds stay separate.`;
 }
 
 function terminalColorPresetCopyTitle(preset) {
   if (!preset) return "Choose a terminal color preset first.";
-  return `Copy ${preset.label} terminal colors as JSON.`;
+  return `Copy ${preset.label} terminal colors for all terminals as JSON.`;
+}
+
+function terminalColorPresetPaneTitle(preset, panel = activeTerminalPanelForSettings(), active = isTerminalColorPresetActiveForPanel(preset, panel)) {
+  if (!preset) return "Choose a terminal color preset first.";
+  if (panel?.type !== "terminal") return "Focus or create a terminal pane first.";
+  return active
+    ? `${preset.label} colors already match the focused terminal.`
+    : `Apply ${preset.label} colors only to the focused terminal.`;
+}
+
+function terminalColorPresetPaneSearchText(preset, panel = activeTerminalPanelForSettings(), active = isTerminalColorPresetActiveForPanel(preset, panel)) {
+  return normalizeSettingsQuery([
+    terminalColorPresetBaseSearchText(preset),
+    "apply active focused pane only terminal color override",
+    panel?.type === "terminal" ? "ready" : "unavailable no terminal",
+    active ? "active current unavailable already applied" : ""
+  ].join(" "));
 }
 
 function terminalColorPresetCycleModel() {
@@ -35051,7 +35899,7 @@ function terminalColorPresetCycleModel() {
     disabled: !preset || (presets.length === 1 && activeIndex === 0),
     meta: preset ? `${preset.label} / ${next.background} / ${next.foreground}` : "No terminal color presets",
     title: preset
-      ? `Cycle terminal colors to ${preset.label}.`
+      ? `Cycle all terminal colors + new to ${preset.label}.`
       : "No terminal color presets are available.",
     search: normalizeSettingsQuery(`terminal colors cycle next theme preset palette background foreground text cursor current ${current.background} ${current.foreground} ${current.cursor} next ${preset?.label || ""} ${preset?.body || ""} ${next.background} ${next.foreground} ${next.cursor}`)
   };
@@ -35074,6 +35922,7 @@ const terminalSetupSettings = [
   "terminalScrollback",
   "terminalCursorStyle",
   "terminalCursorBlink",
+  "terminalConfirmMultilinePaste",
   "terminalBackground",
   "terminalForeground",
   "terminalCursorColor",
@@ -35173,6 +36022,7 @@ function terminalSetupSummaryForSettings(settings) {
     padding: `${normalized.terminalPadding}px`,
     history: `${Number(normalized.terminalScrollback || 0).toLocaleString()} history`,
     cursor: `${optionLabel(terminalCursorStyles, normalized.terminalCursorStyle, normalized.terminalCursorStyle)}${normalized.terminalCursorBlink ? " blink" : ""}`,
+    paste: normalized.terminalConfirmMultilinePaste ? "Confirm multiline paste" : "Paste directly",
     shell: optionLabel(terminalProfiles, normalized.terminalProfile, normalized.terminalProfile),
     colors: terminalColorEffectiveForSettings(normalized)
   };
@@ -35241,7 +36091,7 @@ function terminalSetupSettingUpdateFromValue(key, raw) {
   if (key === "terminalFontFamily") return optionIdAllowed(terminalFontOptions, raw) ? raw : null;
   if (key === "terminalCursorStyle") return optionIdAllowed(terminalCursorStyles, raw) ? raw : null;
   if (key === "terminalProfile") return optionIdAllowed(terminalProfiles, raw) ? raw : null;
-  if (key === "terminalCursorBlink") return typeof raw === "boolean" ? raw : null;
+  if (key === "terminalCursorBlink" || key === "terminalConfirmMultilinePaste") return typeof raw === "boolean" ? raw : null;
   if (key === "terminalCustomShell") {
     if (raw === null) return "";
     return typeof raw === "string" ? raw.trim().slice(0, 512) : null;
@@ -35270,13 +36120,14 @@ function terminalSetupUpdatesFromPayload(payload) {
   return Object.keys(updates).length ? updates : null;
 }
 
-function applyTerminalSetupUpdates(updates, options = {}) {
+async function applyTerminalSetupUpdates(updates, options = {}) {
   if (!updates) {
     toast("Clipboard does not contain terminal setup.");
     return false;
   }
   const changed = updateSettings(updates, { immediate: true });
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(updates, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     toast(options.alreadyText || "Terminal setup already matches.");
     return false;
   }
@@ -35286,14 +36137,16 @@ function applyTerminalSetupUpdates(updates, options = {}) {
 }
 
 function terminalSetupSettingsAreDefault() {
-  return settingsKeysMatchDefaults(terminalSetupSettings);
+  return settingsKeysMatchDefaults(terminalSetupSettings)
+    && terminalPanelsWithColorOverrides(terminalColorSettingKeys).length === 0;
 }
 
-function resetTerminalSetupSettings(options = {}) {
+async function resetTerminalSetupSettings(options = {}) {
   const updates = {};
   for (const key of terminalSetupSettings) updates[key] = defaultSettings[key];
   const changed = updateSettings(updates, { immediate: true });
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(updates, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     if (options.toast !== false) toast("Terminal setup already uses defaults.");
     return false;
   }
@@ -35682,14 +36535,15 @@ function terminalColorUpdatesFromPayload(payload) {
   return Object.keys(updates).length ? updates : null;
 }
 
-function applyTerminalColorUpdates(updates, toastText = "Terminal colors applied.", options = {}) {
+async function applyTerminalColorUpdates(updates, toastText = "Terminal colors applied to all terminals + new.", options = {}) {
   if (!updates) {
     toast("Clipboard does not contain terminal colors.");
     return false;
   }
   const changed = updateSettings(updates);
-  if (!changed) {
-    toast("Terminal colors already match.");
+  const clearedCount = await clearTerminalColorOverridesForUpdates(updates, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
+    toast("Terminal colors already match for all terminals + new.");
     return false;
   }
   refreshTerminalColorSettings(options);
@@ -35714,22 +36568,43 @@ async function pasteTerminalColorPalette() {
 
 function applyTerminalColorPreset(preset, options = {}) {
   if (!preset) return false;
-  const changed = updateSettings({
+  return applyTerminalColorUpdates({
     terminalBackground: preset.background,
     terminalForeground: preset.foreground,
     terminalCursorColor: preset.cursor
-  });
-  if (!changed) {
-    toast(`${preset.label} terminal colors already active.`);
-    return false;
-  }
-  refreshTerminalColorSettings(options);
-  toast(`${preset.label} terminal colors applied.`);
-  return true;
+  }, `${preset.label} terminal colors applied to all terminals + new.`, options);
 }
 
 function applyTerminalColorPresetById(presetId, options = {}) {
   return applyTerminalColorPreset(terminalColorPresetById(presetId), options);
+}
+
+async function applyTerminalColorPresetToActivePane(presetId, panel = activeTerminalPanelForSettings(), options = {}) {
+  const preset = terminalColorPresetById(presetId);
+  const target = paneSetupTarget(panel);
+  if (!preset) {
+    toast("Terminal color preset not found.");
+    return false;
+  }
+  if (target?.type !== "terminal") {
+    toast("Focus or create a terminal pane first.");
+    return false;
+  }
+  if (isTerminalColorPresetActiveForPanel(preset, target)) {
+    toast(`${preset.label} colors already match the focused terminal.`);
+    return false;
+  }
+  await updatePanel(target.id, {
+    terminalBackground: preset.background,
+    terminalForeground: preset.foreground,
+    terminalCursorColor: preset.cursor
+  }, {
+    render: options.render
+  });
+  refreshActivePaneSetupSettings(options);
+  refreshTerminalColorSettings(options);
+  toast(`${preset.label} colors applied to focused terminal.`);
+  return true;
 }
 
 function terminalColorPresetGrid() {
@@ -35777,6 +36652,17 @@ function terminalColorPresetGrid() {
     };
     const actions = document.createElement("div");
     actions.className = "terminal-color-preset-actions";
+    const activePanel = activeTerminalPanelForSettings();
+    const activePane = isTerminalColorPresetActiveForPanel(preset, activePanel);
+    const applyPane = settingsActionButton(
+      activePane ? "Pane active" : "Active pane",
+      () => applyTerminalColorPresetToActivePane(preset.id),
+      activePane ? "primary" : "",
+      terminalColorPresetPaneSearchText(preset, activePanel, activePane)
+    );
+    applyPane.dataset.terminalColorPane = preset.id;
+    applyPane.disabled = !activePanel || activePane;
+    applyPane.title = terminalColorPresetPaneTitle(preset, activePanel, activePane);
     const save = settingsActionButton(
       savedProfile ? "Saved" : "Save",
       () => saveTerminalColorPresetProfile(preset.id),
@@ -35789,7 +36675,7 @@ function terminalColorPresetGrid() {
     const copy = settingsActionButton("Copy", () => copyTerminalColorPresetPalette(preset.id), "", terminalColorPresetCopySearchText(preset));
     copy.dataset.terminalColorCopy = preset.id;
     copy.title = terminalColorPresetCopyTitle(preset);
-    actions.append(save, copy);
+    actions.append(applyPane, save, copy);
     card.append(button, actions);
     grid.append(card);
   }
@@ -35819,6 +36705,21 @@ function updateTerminalColorPresetCard(card, preset) {
     if (button.dataset.settingsSearch !== buttonSearch) {
       button.dataset.settingsSearch = buttonSearch;
       updateSettingsSearchIndexItemSearch(button, buttonSearch);
+      changed = true;
+    }
+  }
+  const pane = card.querySelector("[data-terminal-color-pane]");
+  if (pane) {
+    const activePanel = activeTerminalPanelForSettings();
+    const activePane = isTerminalColorPresetActiveForPanel(preset, activePanel);
+    changed = setTextIfChanged(pane, activePane ? "Pane active" : "Active pane") || changed;
+    changed = setDisabledIfChanged(pane, !activePanel || activePane) || changed;
+    changed = toggleClassIfChanged(pane, "primary", activePane) || changed;
+    changed = setTitleIfChanged(pane, terminalColorPresetPaneTitle(preset, activePanel, activePane)) || changed;
+    const paneSearch = terminalColorPresetPaneSearchText(preset, activePanel, activePane);
+    if (pane.dataset.settingsSearch !== paneSearch) {
+      pane.dataset.settingsSearch = paneSearch;
+      updateSettingsSearchIndexItemSearch(pane, paneSearch);
       changed = true;
     }
   }
@@ -36312,7 +37213,15 @@ function recentBrowserPagesSettings() {
 
     const actions = document.createElement("div");
     actions.className = "recent-folder-actions command-snippet-actions is-built-in";
-    const open = settingsActionButton("Open", () => createPanel("browser", newPaneDirection(), { url: pageUrl }), "", `recent browser page open ${pageUrl} ${workspaceTitle} ${paneQueueLabel}`);
+    const open = attachBrowserPanePlacementMenu(
+      settingsActionButton("Open", () => createBrowserPanel(newPaneDirection(), { url: pageUrl }), "", `recent browser page open right below split placement ${pageUrl} ${workspaceTitle} ${paneQueueLabel}`),
+      () => ({
+        title: `Open ${hostnameOf(pageUrl) || pageUrl}`,
+        workspace: activeWorkspace(),
+        workspaceId: activeWorkspace()?.id,
+        url: pageUrl
+      })
+    );
     open.dataset.recentBrowserAction = "open";
     open.dataset.recentBrowserUrl = url;
     setRecentBrowserOpenActionState(open, pageUrl, workspace, paneQueueFull);
@@ -36354,7 +37263,7 @@ function setRecentBrowserOpenActionState(button, url, workspace = activeWorkspac
       ? "Open a workspace before opening recent browser pages."
       : paneQueueFull
         ? paneCreationLimitLabel()
-        : `Open ${hostnameOf(pageUrl) || pageUrl} in a new browser pane.`;
+        : `${paneCreationActionTitle(`Open ${hostnameOf(pageUrl) || pageUrl} in a new browser pane.`, newPanePlacementHint())} Right-click to choose right or below.`;
 }
 
 function setRecentBrowserHomeActionState(button, activeHome) {
@@ -36501,12 +37410,19 @@ function browserTabSessionsSettings() {
     const copyAction = settingsActionButton("Copy", () => copyBrowserTabSessionByPanelId(entry.id), "", `browser tab session copy saved clipboard json ${entry.label} ${entryWorkspaceTitle} ${entryTabCount} ${entry.activeHost} ${entry.activeUrl}`);
     copyAction.title = `Copy ${entry.label} browser tabs as JSON.`;
     const duplicateAction = settingsActionButton("Duplicate", () => duplicateBrowserTabSessionByPanelId(entry.id), "", `browser tab session duplicate restore open pane ${duplicateDisabled ? "unavailable " : "ready "}${entry.label} ${entryWorkspaceTitle} ${entryTabCount} ${entry.activeHost} ${entry.activeUrl} ${paneQueueLabel}`);
+    attachBrowserPanePlacementMenu(duplicateAction, () => ({
+      title: "Duplicate browser tabs",
+      workspace: entry.workspace,
+      workspaceId: entry.workspace?.id,
+      url: browserTabSessionActiveTab(normalizeBrowserTabSnapshot(entry.snapshot, state.settings.browserHomeUrl))?.url || state.settings.browserHomeUrl,
+      create: (direction) => duplicateBrowserTabSessionByPanelId(entry.id, { direction })
+    }));
     duplicateAction.disabled = duplicateDisabled;
     duplicateAction.title = !entry.workspace
       ? "Open a workspace before duplicating browser tab sessions."
       : paneQueueFull
         ? paneCreationLimitLabel()
-        : `Open a new browser pane with ${entryTabCount} from ${entry.label}.`;
+        : `${paneCreationActionTitle(`Open a new browser pane with ${entryTabCount} from ${entry.label}.`, newPanePlacementHint())} Right-click to choose right or below.`;
     actions.append(focusAction, copyAction, duplicateAction);
     card.append(text, actions);
     section.append(card);
@@ -37287,11 +38203,13 @@ function settingsPresetTags(settings) {
 }
 
 function isActiveSettingsPreset(preset) {
+  if (terminalColorOverridesMaskSettings(preset?.settings)) return false;
   return Object.entries(preset.settings).every(([key, value]) => state.settings[key] === value);
 }
 
 function isActiveSettingsProfile(profile) {
   if (!profile?.settings) return false;
+  if (terminalColorOverridesMaskSettings(profile.settings)) return false;
   const normalized = normalizeSettings(profile.settings);
   return profileSettingsSettingKeys.every((key) => state.settings[key] === normalized[key]);
 }
@@ -37306,9 +38224,10 @@ function refreshSettingsAfterGlobalStateChange(options = {}) {
   scheduleSettingsInspectorRender({ ifChanged: true });
 }
 
-function applySettingsPreset(preset, options = {}) {
+async function applySettingsPreset(preset, options = {}) {
   const changed = updateSettings(preset.settings);
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(preset.settings, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     toast(`${preset.label} settings already active.`);
     return false;
   }
@@ -37338,13 +38257,16 @@ function settingsProfilesPanel() {
   title.textContent = "Saved profiles";
   const save = settingsActionButton("Save", saveCurrentSettingsProfileFromProfiles, "", `save current settings profile preset reusable ${profilesFull ? "limit full " : ""}${setup.kind} ${setup.label} ${currentSummary}`);
   applySettingsProfileSaveLimit(save, "Save the current colors, layout, terminal, browser, and performance settings as a reusable profile.");
+  const restorePrevious = settingsActionButton("Undo", restorePreviousSettings, "", `restore previous settings undo revert last change profile setup customization ${previousSettingsSnapshotLabel()}`);
+  restorePrevious.disabled = !hasPreviousSettingsSnapshot();
+  restorePrevious.title = previousSettingsRestoreTitle();
   const copyCurrent = settingsActionButton("Copy", copyCurrentSettingsProfile, "", `copy current settings profile setup preset clipboard json ${setup.kind} ${setup.label} ${currentSummary}`);
   copyCurrent.title = "Copy the current setup as a Settings profile JSON.";
   const paste = settingsActionButton("Paste", pasteSettingsProfile, "", `paste settings profile setup preset clipboard json import saved reusable ${profilesFull ? "limit full " : ""}${profileCountLabel}`);
   applySettingsProfileSaveLimit(paste, "Paste a copied Settings profile.");
   const headerActions = document.createElement("div");
   headerActions.className = "recent-folder-header-actions";
-  headerActions.append(save, copyCurrent, paste);
+  headerActions.append(save, restorePrevious, copyCurrent, paste);
   header.append(title, headerActions);
   wrapper.append(header, settingsProfileCurrentSetupPanel());
 
@@ -37791,11 +38713,12 @@ function defaultSettingsProfileName(baseName = "My profile") {
   return base;
 }
 
-function applySavedSettingsProfile(profileId, options = {}) {
+async function applySavedSettingsProfile(profileId, options = {}) {
   const profile = state.savedSettingsProfiles.find((candidate) => candidate.id === profileId);
   if (!profile) return false;
   const changed = updateSettings(profile.settings);
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(profile.settings, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     toast(`${profile.label} profile already active.`);
     return false;
   }
@@ -38106,18 +39029,24 @@ function currentWorkspaceBlueprintSnapshot(label, overrides = {}) {
     cwd: workspace.cwd || "",
     createdAt: overrides.createdAt,
     paneTreeTemplate: paneTreeTemplateFromPaneTree(currentTree, panels),
-    panels: panels.map((panel) => ({
-      type: panel.type,
-      title: panel.title || (panel.type === "browser" ? hostnameOf(panel.url) : "Terminal"),
-      color: panel.color || "",
-      backgroundImage: panel.backgroundImage || "",
-      cwd: panel.cwd || workspace.cwd || "",
-      shellProfile: panel.shellProfile || state.settings.terminalProfile,
-      shellPath: panel.shellPath || "",
-      terminalFontSize: panel.terminalFontSize || 0,
-      url: panel.url || state.settings.browserHomeUrl,
-      weight: storedPaneWeight(panel.id, direction) || equalWeight
-    }))
+    panels: panels.map((panel) => {
+      const colorOverrides = terminalPanelColorOverrides(panel);
+      return {
+        type: panel.type,
+        title: panel.title || (panel.type === "browser" ? hostnameOf(panel.url) : "Terminal"),
+        color: panel.color || "",
+        backgroundImage: panel.backgroundImage || "",
+        terminalBackground: colorOverrides.terminalBackground,
+        terminalForeground: colorOverrides.terminalForeground,
+        terminalCursorColor: colorOverrides.terminalCursorColor,
+        cwd: panel.cwd || workspace.cwd || "",
+        shellProfile: panel.shellProfile || state.settings.terminalProfile,
+        shellPath: panel.shellPath || "",
+        terminalFontSize: panel.terminalFontSize || 0,
+        url: panel.url || state.settings.browserHomeUrl,
+        weight: storedPaneWeight(panel.id, direction) || equalWeight
+      };
+    })
   });
 }
 
@@ -38132,6 +39061,9 @@ function workspaceBlueprintComparableModel(blueprint) {
       title: panel.title || "",
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
+      terminalBackground: panel.terminalBackground || "",
+      terminalForeground: panel.terminalForeground || "",
+      terminalCursorColor: panel.terminalCursorColor || "",
       cwd: panel.cwd || "",
       shellProfile: panel.shellProfile || "",
       shellPath: panel.shellPath || "",
@@ -38250,6 +39182,9 @@ async function applyWorkspaceBlueprint(blueprintId, workspaceId = activeWorkspac
         title: panel.title,
         color: panel.color,
         backgroundImage: panel.backgroundImage,
+        terminalBackground: panel.terminalBackground,
+        terminalForeground: panel.terminalForeground,
+        terminalCursorColor: panel.terminalCursorColor,
         cwd: panel.cwd || blueprint.cwd || workspace.cwd,
         shellProfile: panel.shellProfile,
         shellPath: panel.shellPath,
@@ -38530,6 +39465,8 @@ function showPanelContextMenu(event, panel) {
       contextMenuButton("Open externally", () => openBrowserPanelExternally(panel), false, "", { icon: "external" }),
       contextMenuButton(t("browser.openWithProfile"), () => showExternalBrowserProfileMenuAt(event.clientX, event.clientY, browserPanelUrl(panel)), false, "", { keepOpen: true, icon: "browser" }),
       contextMenuButton("Copy URL", () => copyBrowserPanelUrl(panel), false, "", { icon: "copy" }),
+      contextMenuButton("Browser right", () => createBrowserPanel("right", { workspaceId: found.workspace.id, anchorPanelId: panel.id, url: state.settings.browserHomeUrl }), paneCreationButtonsDisabled(), "", { icon: "splitRight" }),
+      contextMenuButton("Browser below", () => createBrowserPanel("down", { workspaceId: found.workspace.id, anchorPanelId: panel.id, url: state.settings.browserHomeUrl }), paneCreationButtonsDisabled(), "", { icon: "splitDown" }),
       usePageHome,
       savePageProfile,
       contextMenuButton("Browser settings", () => openSettingsCategory("browser"), false, "", { icon: "settings" })
@@ -38679,6 +39616,8 @@ function showWorkspaceContextMenu(event, workspace) {
     contextMenuButton("Paste setup", () => pasteWorkspaceSetup(workspace)),
     contextMenuButton("New terminal here", () => createTerminalPanel(newPaneDirection(), { workspaceId: workspace.id })),
     contextMenuButton("Open browser here", () => openBrowserPrompt(workspace.id)),
+    contextMenuButton("Browser right", () => createBrowserPanel("right", { workspaceId: workspace.id, url: state.settings.browserHomeUrl })),
+    contextMenuButton("Browser below", () => createBrowserPanel("down", { workspaceId: workspace.id, url: state.settings.browserHomeUrl })),
     contextMenuButton("New workspace", () => createWorkspace()),
     contextMenuButton("New workspace from folder", () => createWorkspaceFromFolder()),
     contextMenuButton("Close all panes", () => closeAllPanes(workspace), workspace.panels.length === 0, "danger"),
@@ -39004,17 +39943,17 @@ function showToolbarMenu(event) {
         availableTitle: "Clear the focused terminal background.",
         emptyTitle: "Focused terminal background is already clear."
       })),
-      toolbarAction("Choose all terminal backgrounds", () => chooseWorkspaceTerminalBackground(workspace), allTerminalChooseBackground.disabled, allTerminalChooseBackground.title, allTerminalChooseBackground.title),
-      toolbarAction("Paste all terminal backgrounds", () => pasteWorkspaceTerminalBackgroundFromClipboard(workspace), allTerminalPasteBackground.disabled, allTerminalPasteBackground.title, allTerminalPasteBackground.title),
+      toolbarAction("Choose terminal backgrounds + new", () => chooseWorkspaceTerminalBackground(workspace), allTerminalChooseBackground.disabled, allTerminalChooseBackground.title, allTerminalChooseBackground.title),
+      toolbarAction("Paste terminal backgrounds + new", () => pasteWorkspaceTerminalBackgroundFromClipboard(workspace), allTerminalPasteBackground.disabled, allTerminalPasteBackground.title, allTerminalPasteBackground.title),
       toolbarAction(
-        allTerminalUseAppBackground.active ? "App background active for all" : "Use app background for all terminals",
+        allTerminalUseAppBackground.active ? "App background active for terminals + new" : "Use app background for terminals + new",
         () => useAppBackgroundForWorkspaceTerminals(workspace),
         allTerminalUseAppBackground.disabled,
         allTerminalUseAppBackground.title,
         allTerminalUseAppBackground.title
       ),
       toolbarAction(
-        "Clear all terminal backgrounds",
+        "Clear terminal backgrounds + new",
         () => clearWorkspaceTerminalBackgrounds(workspace),
         allTerminalClearBackgrounds.disabled,
         allTerminalClearBackgrounds.title,
@@ -39025,13 +39964,15 @@ function showToolbarMenu(event) {
       toolbarAction("Copy terminal setup", copyTerminalSetup, false, "Copy the current terminal font, spacing, colors, cursor, and shell setup."),
       toolbarAction("Paste terminal setup", pasteTerminalSetup, false, "Apply a copied cmux terminal setup."),
       toolbarAction("Reset terminal setup", resetTerminalSetupSettings, terminalSetupDefault, "Reset terminal font, spacing, history, colors, cursor, and default shell.", "Terminal setup already uses defaults."),
-      toolbarAction("Copy terminal colors", copyTerminalColorPalette, false, "Copy the current terminal color setup."),
-      toolbarAction("Paste terminal colors", pasteTerminalColorPalette, false, "Apply terminal colors copied from cmux."),
-      toolbarAction("Reset terminal colors", () => applyTerminalColorPresetById("cmux"), terminalColorsDefault, "Reset background, text, and cursor colors to the cmux default.", "Terminal colors already match the cmux default.")
+      toolbarAction("Copy terminal colors", copyTerminalColorPalette, false, "Copy the current all-terminal color setup."),
+      toolbarAction("Paste terminal colors", pasteTerminalColorPalette, false, "Apply copied terminal colors to all terminals + new."),
+      toolbarAction("Reset terminal colors", () => applyTerminalColorPresetById("cmux"), terminalColorsDefault, "Reset background, text, and cursor colors to the cmux default for all terminals + new.", "Terminal colors already match the cmux default for all terminals + new.")
     ),
     contextMenuSectionTitle("Browser"),
     contextMenuActionGroup(
       contextMenuButton("Open browser", () => openBrowserPrompt(workspace?.id)),
+      toolbarAction("Browser right", () => createBrowserPanel("right", { workspaceId: workspace?.id, url: state.settings.browserHomeUrl }), !workspace, "Open the browser home page to the right.", workspaceRequiredTitle),
+      toolbarAction("Browser below", () => createBrowserPanel("down", { workspaceId: workspace?.id, url: state.settings.browserHomeUrl }), !workspace, "Open the browser home page below.", workspaceRequiredTitle),
       toolbarAction("New browser tab", () => newBrowserTabFromPanel(panel), !browserActive, "Open a new tab in the focused browser.", browserRequiredTitle),
       toolbarAction("Focus address", () => focusBrowserAddress(panel), !browserActive, "Focus the browser address field.", browserRequiredTitle),
       toolbarAction("Reload active page", () => reloadBrowserPanel(panel), !browserActive, "Reload the focused browser page.", browserRequiredTitle),
@@ -39041,8 +39982,8 @@ function showToolbarMenu(event) {
       toolbarAction("Save active page profile", () => saveActiveBrowserPageProfile(panel), saveActiveBrowserProfileDisabled, saveActiveBrowserProfileTitle),
       toolbarAction("Copy active tabs", () => copyActiveBrowserTabSession(panel), !browserActive, "Copy the focused browser tab session as JSON.", browserRequiredTitle),
       toolbarAction("Paste browser tabs", pasteBrowserTabSessions, !workspace, "Paste copied browser tabs into the focused browser or restore them as panes.", workspaceRequiredTitle),
-      toolbarAction("Open home page", () => createPanel("browser", newPaneDirection(), { workspaceId: workspace?.id, url: state.settings.browserHomeUrl }), !workspace, "Open the home page in a browser pane.", workspaceRequiredTitle),
-      toolbarAction(latestBrowserPage ? `Open recent: ${hostnameOf(latestBrowserPage)}` : "Open recent page", () => createPanel("browser", newPaneDirection(), { workspaceId: workspace?.id, url: latestBrowserPage }), !latestBrowserPage || !workspace, "Open the most recent browser page.", !workspace ? workspaceRequiredTitle : "There are no recent browser pages yet."),
+      toolbarAction("Open home page", () => createBrowserPanel(newPaneDirection(), { workspaceId: workspace?.id, url: state.settings.browserHomeUrl }), !workspace, "Open the home page in a browser pane.", workspaceRequiredTitle),
+      toolbarAction(latestBrowserPage ? `Open recent: ${hostnameOf(latestBrowserPage)}` : "Open recent page", () => createBrowserPanel(newPaneDirection(), { workspaceId: workspace?.id, url: latestBrowserPage }), !latestBrowserPage || !workspace, "Open the most recent browser page.", !workspace ? workspaceRequiredTitle : "There are no recent browser pages yet."),
       toolbarAction("Save recent page profile", () => saveBrowserProfileForHome(latestBrowserPage), saveLatestBrowserProfileDisabled, saveLatestBrowserProfileTitle),
       toolbarAction("Copy recent pages", copyRecentBrowserPages, state.recentBrowserPages.length === 0, "Copy recent browser pages as JSON.", "Recent browser pages are empty."),
       toolbarAction("Paste recent pages", pasteRecentBrowserPages, false, "Merge copied browser pages into recent pages."),
@@ -39127,6 +40068,11 @@ function showToolbarMenu(event) {
       contextMenuButton("Command snippets", () => openSettingsCategory("commands")),
       contextMenuButton("Paste command snippet", pasteCommandSnippet),
       contextMenuButton("Settings profiles", () => openSettingsCategory("profiles")),
+      (() => {
+        const action = contextMenuButton("Restore previous settings", restorePreviousSettings, !hasPreviousSettingsSnapshot());
+        action.title = previousSettingsRestoreTitle();
+        return action;
+      })(),
       contextMenuButton("Copy current profile", copyCurrentSettingsProfile),
       (() => {
         const action = contextMenuButton("Paste settings profile", pasteSettingsProfile, profilesFull);
@@ -39224,14 +40170,37 @@ function showToolbarMenu(event) {
 }
 
 function showContextMenuAt(menu, preferredX, preferredY) {
-  menu.hidden = false;
-  menu.scrollTop = 0;
   const margin = 8;
+  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  const maxWidth = Math.max(1, viewportWidth - margin * 2);
+  const maxHeight = Math.max(1, viewportHeight - margin * 2);
+  menu.hidden = false;
+  menu.style.visibility = "hidden";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  menu.style.maxWidth = `${maxWidth}px`;
+  menu.style.maxHeight = `${maxHeight}px`;
+  menu.style.overflowY = "auto";
+  menu.scrollTop = 0;
   const rect = menu.getBoundingClientRect();
-  const x = Math.min(preferredX, window.innerWidth - rect.width - margin);
-  const y = Math.min(preferredY, window.innerHeight - rect.height - margin);
-  menu.style.left = `${Math.max(margin, x)}px`;
-  menu.style.top = `${Math.max(margin, y)}px`;
+  const width = Math.min(rect.width || maxWidth, maxWidth);
+  const height = Math.min(rect.height || maxHeight, maxHeight);
+  const anchorX = Number.isFinite(preferredX) ? preferredX : margin;
+  const anchorY = Number.isFinite(preferredY) ? preferredY : margin;
+  const leftSpace = Math.max(0, anchorX - margin);
+  const rightSpace = Math.max(0, viewportWidth - anchorX - margin);
+  const topSpace = Math.max(0, anchorY - margin);
+  const bottomSpace = Math.max(0, viewportHeight - anchorY - margin);
+  const openLeft = rightSpace < width && leftSpace > rightSpace;
+  const openUp = bottomSpace < height && topSpace > bottomSpace;
+  const maxX = Math.max(margin, viewportWidth - width - margin);
+  const maxY = Math.max(margin, viewportHeight - height - margin);
+  const x = clamp(openLeft ? anchorX - width : anchorX, margin, maxX);
+  const y = clamp(openUp ? anchorY - height : anchorY, margin, maxY);
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.style.visibility = "";
 }
 
 function contextMenuSectionTitle(label) {
@@ -39269,6 +40238,48 @@ function contextMenuButton(label, action, disabled = false, tone = "", options =
     action();
     if (!options.keepOpen) hideContextMenu();
   };
+  return button;
+}
+
+function showBrowserPanePlacementMenu(event, options = {}) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.currentTarget?.disabled) return;
+  const workspace = options.workspace || activeWorkspace();
+  const workspaceId = options.workspaceId || workspace?.id || activeWorkspace()?.id;
+  const url = normalizeBrowserPageUrl(options.url || state.settings.browserHomeUrl);
+  const disabled = !workspaceId || paneCreationButtonsDisabled();
+  const create = (direction) => {
+    if (typeof options.create === "function") return options.create(direction);
+    return createBrowserPanel(direction, { workspaceId, url });
+  };
+  const title = document.createElement("div");
+  title.className = "context-title";
+  title.textContent = options.title || "Open browser pane";
+  const meta = document.createElement("div");
+  meta.className = "context-meta";
+  meta.textContent = disabled
+    ? (!workspaceId ? "Open a workspace first" : paneCreationLimitLabel())
+    : `${hostnameOf(url) || url} / ${workspaceDisplayTitle(workspace, "Workspace")}`;
+  const menu = ensureContextMenu();
+  menu.className = "context-menu";
+  menu.replaceChildren(
+    title,
+    meta,
+    contextMenuActionGroup(
+      contextMenuButton("Browser right", () => create("right"), disabled, "", { icon: "splitRight" }),
+      contextMenuButton("Browser below", () => create("down"), disabled, "", { icon: "splitDown" })
+    )
+  );
+  showContextMenuAt(menu, event.clientX, event.clientY);
+}
+
+function attachBrowserPanePlacementMenu(button, options = {}) {
+  if (!button) return button;
+  button.addEventListener("contextmenu", (event) => {
+    const nextOptions = typeof options === "function" ? options(button) : options;
+    showBrowserPanePlacementMenu(event, nextOptions || {});
+  });
   return button;
 }
 
@@ -39562,20 +40573,21 @@ function renameActivePanel(panel = focusedPanel() || activePanel()) {
 function splitPanel(panel, direction, type = "terminal", options = {}) {
   const found = findPanelState(panel?.id);
   if (!found) return null;
-  const createOptions = type === "terminal"
-    ? { immediateTerminalInit: true, ...options }
-    : options;
-  return createPanel(type, direction, {
-    ...createOptions,
+  const createOptions = {
+    ...options,
     workspaceId: found.workspace.id,
     anchorPanelId: panel.id
-  });
+  };
+  if (type === "terminal") return createTerminalPanel(direction, createOptions);
+  if (type === "browser") return createBrowserPanel(direction, createOptions);
+  return createPanel(type, direction, createOptions);
 }
 
 function splitActivePanel(direction, type = "terminal", options = {}) {
   const panel = focusedPanel();
   if (panel) return splitPanel(panel, direction, type, options);
   if (type === "terminal") return createTerminalPanel(direction, options);
+  if (type === "browser") return createBrowserPanel(direction, options);
   return createPanel(type, direction, options);
 }
 
@@ -39597,7 +40609,8 @@ function duplicatePanel(panel) {
     shellProfile: panel.shellProfile || state.settings.terminalProfile,
     shellPath: panel.shellPath || state.settings.terminalCustomShell,
     terminalFontSize: panel.terminalFontSize || 0,
-    backgroundImage: panel.backgroundImage || ""
+    backgroundImage: panel.backgroundImage || "",
+    ...terminalPanelColorOverrides(panel)
   });
 }
 
@@ -39734,6 +40747,9 @@ function appendPalettePaneTargetSignature(parts) {
   appendSignatureValue(parts, Boolean(panel?.titleLocked));
   appendSignatureValue(parts, panel?.color || "");
   appendSignatureValue(parts, panel?.type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "");
+  appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalColor(panel.terminalBackground) : "");
+  appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalColor(panel.terminalForeground) : "");
+  appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalColor(panel.terminalCursorColor) : "");
   appendSignatureValue(parts, panel?.type === "terminal" ? normalizeTerminalFontSize(panel.terminalFontSize, 0) : 0);
   appendSignatureValue(parts, panel?.type === "browser" ? browserPanelUrl(panel) || panel.url || "" : "");
   appendSignatureValue(parts, panel?.type === "browser" ? browserPanePageTitleSuggestion(panel) : "");
@@ -39784,6 +40800,18 @@ function paletteQuickActions() {
       run: () => openInspector("settings")
     }
   ];
+  if (hasPreviousSettingsSnapshot()) {
+    actions.unshift({
+      id: "quick.restoreSettings",
+      label: "Undo settings",
+      meta: previousSettingsSnapshotLabel(),
+      shortcut: "Undo",
+      icon: "history",
+      disabled: false,
+      title: previousSettingsRestoreTitle,
+      run: () => restorePreviousSettings()
+    });
+  }
   if (!isSettingsPresetIdActive("simpleFast")) {
     actions.splice(2, 0, {
       id: "quick.fastSetup",
@@ -40023,6 +41051,8 @@ function paletteQuickActionsSignature() {
   appendSignatureValue(parts, isSettingsPresetIdActive("simpleFast"));
   appendSignatureValue(parts, Boolean(activeSavedSettingsProfile()));
   appendSignatureValue(parts, activeSettingsSetupLabel());
+  appendSignatureValue(parts, hasPreviousSettingsSnapshot());
+  appendSignatureValue(parts, previousSettingsSnapshotLabel());
   appendSignatureValue(parts, browserWorkflowPresetActiveSignature());
   appendSignatureValue(parts, performanceTuningPresetActiveSignature());
   appendSignatureValue(parts, performanceHealthPaletteSignature());
@@ -40739,7 +41769,7 @@ function paletteEntries() {
             ? paneCreationLimitLabel()
             : `Open ${pageHost} in a new browser pane.`,
       search: normalizeSettingsQuery(`recent browser page web url open ${openDisabled ? "unavailable " : "ready "}${pageIndex + 1} ${pageHost} ${pageUrl} ${recentBrowserWorkspaceTitle} ${recentBrowserQueueLabel}`),
-      run: () => createPanel("browser", newPaneDirection(), { url: pageUrl })
+      run: () => createBrowserPanel(newPaneDirection(), { url: pageUrl })
     });
     entries.push({
       id: `recentBrowser.home.${pageIndex}`,
@@ -41003,7 +42033,7 @@ function paletteEntries() {
     label: "Copy terminal colors",
     meta: "Background, text, and cursor JSON",
     shortcut: "Copy",
-    title: "Copy the current terminal color setup.",
+    title: "Copy the current all-terminal color setup.",
     search: normalizeSettingsQuery("terminal colors copy current palette json clipboard background foreground text cursor settings"),
     run: copyTerminalColorPalette
   });
@@ -41012,7 +42042,7 @@ function paletteEntries() {
     label: "Paste terminal colors",
     meta: "Apply copied terminal color JSON",
     shortcut: "Paste",
-    title: "Apply terminal colors copied from cmux.",
+    title: "Apply copied terminal colors to all terminals.",
     search: normalizeSettingsQuery("terminal colors paste apply palette json clipboard background foreground text cursor settings"),
     run: pasteTerminalColorPalette
   });
@@ -41021,7 +42051,7 @@ function paletteEntries() {
     const savedProfile = savedSettingsProfileForTerminalColorPreset(preset);
     entries.push({
       id: `terminalColor.${preset.id}`,
-      label: `Terminal colors: ${preset.label}`,
+      label: `All terminal colors: ${preset.label}`,
       meta: active ? `Active / ${preset.body}` : preset.body,
       shortcut: active ? "Active" : "Theme",
       active,
@@ -41309,13 +42339,13 @@ function paletteEntries() {
     });
     entries.push({
       id: `backgroundPresetTerminals.${presetId}`,
-      label: `Terminal backgrounds: ${preset.label}`,
-      meta: activeAll ? "Active / All terminal panes in workspace" : "All terminal panes in workspace",
+      label: `Terminal backgrounds + new: ${preset.label}`,
+      meta: activeAll ? "Active / Terminal panes + new" : "Terminal panes + new",
       shortcut: activeAll ? "Active" : "Look",
       active: activeAll,
       disabled: activeAll || backgroundAllTargetOption.disabled,
       title: backgroundPresetApplyTitle(preset, backgroundAllTargetOption, activeAll),
-      search: normalizeSettingsQuery(`background preset template image wallpaper apply active all terminal panes workspace ${preset.label} ${preset.value}`),
+      search: normalizeSettingsQuery(`background preset template image wallpaper apply active all terminal panes new future workspace ${preset.label} ${preset.value}`),
       run: () => applyWorkspaceBackgroundImageToTerminals(preset.value)
     });
     entries.push({
@@ -41762,16 +42792,16 @@ function paletteEntries() {
     });
     entries.push({
       id: `savedBackgroundTerminals.${background.id}`,
-      label: `Terminal backgrounds: ${background.label}`,
-      meta: activeAll ? "Active / All terminal panes in workspace" : "All terminal panes in workspace",
+      label: `Terminal backgrounds + new: ${background.label}`,
+      meta: activeAll ? "Active / Terminal panes + new" : "Terminal panes + new",
       shortcut: activeAll ? "Active" : "Look",
       active: activeAll,
       disabled: activeAll || backgroundAllTargetOption.disabled,
       title: savedBackgroundImageApplyTitle(background, backgroundAllTargetOption, activeAll),
-      search: normalizeSettingsQuery(`saved background image wallpaper apply active all terminal panes workspace ${background.label} ${background.url}`),
+      search: normalizeSettingsQuery(`saved background image wallpaper apply active all terminal panes new future workspace ${background.label} ${background.url}`),
       run: () => {
         if (!savedBackgroundImageActiveForTarget(background, "all")) return applySavedBackgroundImageToWorkspaceTerminals(background.id);
-        toast(`All terminals already use ${background.label}.`);
+        toast(`Terminal panes and new terminals already use ${background.label}.`);
         return false;
       }
     });
@@ -41790,6 +42820,16 @@ function paletteEntries() {
   const activeSetup = activeSettingsSetupModel();
   const savedProfilesFull = savedSettingsProfilesFull();
   const activeSetupSummary = settingsProfileSummary(state.settings);
+  entries.push({
+    id: "settingsProfile.restorePrevious",
+    label: "Restore previous settings",
+    meta: previousSettingsSnapshotLabel(),
+    shortcut: "Undo",
+    disabled: !hasPreviousSettingsSnapshot(),
+    title: previousSettingsRestoreTitle(),
+    search: normalizeSettingsQuery(`settings profile setup undo restore previous revert last change customization theme background layout terminal browser performance ${previousSettingsSnapshotLabel()}`),
+    run: restorePreviousSettings
+  });
   entries.push({
     id: "settingsProfile.copyCurrent",
     label: "Copy current settings profile",
@@ -42003,7 +43043,8 @@ async function createWorkspace(options = {}) {
     method: "POST",
     body: JSON.stringify({
       title: options.title,
-      cwd: options.cwd
+      cwd: options.cwd,
+      backgroundImage: terminalCreationBackgroundImage(options)
     })
   });
   if (options.cwd) rememberRecentFolder(workspace.cwd || options.cwd);
@@ -42528,6 +43569,10 @@ function createPendingPanel(type, workspace, options = {}) {
     title: options.title || (isBrowser ? "Opening browser" : "Starting terminal"),
     titleLocked: Boolean(options.title || options.titleLocked),
     color: options.color || "",
+    backgroundImage: type === "terminal" ? terminalCreationBackgroundImage(options, workspace) : "",
+    terminalBackground: type === "terminal" ? normalizeTerminalColor(options.terminalBackground) : "",
+    terminalForeground: type === "terminal" ? normalizeTerminalColor(options.terminalForeground) : "",
+    terminalCursorColor: type === "terminal" ? normalizeTerminalColor(options.terminalCursorColor) : "",
     cwd: options.cwd || workspace.cwd || "",
     cwdShort: workspace.cwdShort || "~",
     branch: "",
@@ -42760,12 +43805,16 @@ async function createPanel(type, direction = newPaneDirection(), options = {}) {
     const url = type === "browser"
       ? normalizeUrl(options.url || state.settings.browserHomeUrl, state.settings.browserHomeUrl)
       : undefined;
+    const backgroundImage = type === "terminal"
+      ? terminalCreationBackgroundImage(options, workspace)
+      : undefined;
     const anchorPanelId = options.anchorPanelId || "";
     const insertRatio = options.insertRatio ?? newPanelInsertRatio(type, direction, options.placement || "after");
     const pendingPanel = options.pending === false
       ? null
       : createPendingPanel(type, workspace, {
         ...options,
+        backgroundImage,
         shellProfile,
         shellPath: shellProfile === "custom" ? shellPath : "",
         url
@@ -42784,7 +43833,10 @@ async function createPanel(type, direction = newPaneDirection(), options = {}) {
           direction,
           title: options.title,
           color: options.color,
-          backgroundImage: options.backgroundImage,
+          backgroundImage,
+          terminalBackground: type === "terminal" ? options.terminalBackground : undefined,
+          terminalForeground: type === "terminal" ? options.terminalForeground : undefined,
+          terminalCursorColor: type === "terminal" ? options.terminalCursorColor : undefined,
           shellProfile: type === "terminal" ? shellProfile : undefined,
           shellPath: type === "terminal" && shellProfile === "custom" ? shellPath : undefined,
           terminalFontSize: type === "terminal" ? options.terminalFontSize : undefined,
@@ -42848,7 +43900,7 @@ async function openBrowserPrompt(workspaceId = null) {
     return true;
   }
   closeInspectorForWorkspace({ render: false });
-  await createPanel("browser", newPaneDirection(), { url, workspaceId });
+  await createBrowserPanel(newPaneDirection(), { url, workspaceId });
 }
 
 function openBrowserHome(workspaceId = activeWorkspace()?.id, options = {}) {
@@ -42857,7 +43909,7 @@ function openBrowserHome(workspaceId = activeWorkspace()?.id, options = {}) {
     return openExternalBrowser(state.settings.browserHomeUrl);
   }
   closeInspectorForWorkspace({ render: false });
-  return createPanel("browser", newPaneDirection(options.direction), { url: state.settings.browserHomeUrl, workspaceId });
+  return createBrowserPanel(newPaneDirection(options.direction), { url: state.settings.browserHomeUrl, workspaceId });
 }
 
 function refreshWorkspaceCounts(workspace) {
@@ -42937,7 +43989,7 @@ function optimisticFocusPanel(panelId, options = {}) {
   const zoomChanged = clearDifferentZoomedPanelOnFocus(found.workspace, panelId);
   found.workspace.activePanelId = panelId;
   state.data.activeWorkspaceId = found.workspace.id;
-  const layoutChanged = maybeApplyReadableBrowserPaneLayout(found.workspace.id, panelId, { render: false });
+  const layoutChanged = maybeApplyReadableBrowserPaneLayout(found.workspace.id, panelId, { render: false, autoLayout: false });
   if (previousWorkspaceId !== found.workspace.id) {
     state.deferSettingsInspectorForWorkspaceSwitch = true;
   }
@@ -43111,6 +44163,11 @@ function optimisticUpdatePanel(panelId, updates = {}, options = {}) {
   if (Object.hasOwn(updates, "backgroundImage") && found.panel.type === "terminal") {
     found.panel.backgroundImage = normalizeBackgroundValue(updates.backgroundImage);
   }
+  if (found.panel.type === "terminal") {
+    for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"]) {
+      if (Object.hasOwn(updates, key)) found.panel[key] = normalizeTerminalColor(updates[key]);
+    }
+  }
   if (Object.hasOwn(updates, "url") && found.panel.type === "browser") {
     found.panel.url = normalizeUrl(updates.url || state.settings.browserHomeUrl, state.settings.browserHomeUrl);
   }
@@ -43157,6 +44214,13 @@ function panelUpdateReconcileNeeded(panelId, updates = {}) {
     const expected = normalizeBackgroundValue(updates.backgroundImage);
     if ((found.panel.backgroundImage || "") !== expected) return true;
   }
+  if (found.panel.type === "terminal") {
+    for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"]) {
+      if (!Object.hasOwn(updates, key)) continue;
+      const expected = normalizeTerminalColor(updates[key]);
+      if (normalizeTerminalColor(found.panel[key]) !== expected) return true;
+    }
+  }
   if (Object.hasOwn(updates, "url") && found.panel.type === "browser") {
     const expected = normalizeUrl(updates.url || state.settings.browserHomeUrl, state.settings.browserHomeUrl);
     if (found.panel.url !== expected) return true;
@@ -43176,6 +44240,7 @@ function closedPanelSnapshot(panelId) {
   if (!found) return null;
   const isBrowser = found.panel.type === "browser";
   const url = found.panel.url || state.settings.browserHomeUrl;
+  const colorOverrides = terminalPanelColorOverrides(found.panel);
   return {
     workspaceId: found.workspace.id,
     workspaceTitle: found.workspace.title || "Workspace",
@@ -43184,6 +44249,9 @@ function closedPanelSnapshot(panelId) {
     titleLocked: Boolean(found.panel.titleLocked),
     color: found.panel.color || "",
     backgroundImage: found.panel.type === "terminal" ? found.panel.backgroundImage || "" : "",
+    terminalBackground: colorOverrides.terminalBackground,
+    terminalForeground: colorOverrides.terminalForeground,
+    terminalCursorColor: colorOverrides.terminalCursorColor,
     cwd: found.panel.cwd || found.workspace.cwd || "",
     shellProfile: found.panel.shellProfile || state.settings.terminalProfile,
     shellPath: found.panel.shellPath || "",
@@ -43218,6 +44286,9 @@ async function reopenClosedPanel() {
       title: snapshot.title,
       color: snapshot.color,
       backgroundImage: snapshot.backgroundImage,
+      terminalBackground: snapshot.terminalBackground,
+      terminalForeground: snapshot.terminalForeground,
+      terminalCursorColor: snapshot.terminalCursorColor,
       cwd: snapshot.cwd || workspace.cwd,
       shellProfile: snapshot.shellProfile,
       shellPath: snapshot.shellPath,
@@ -43655,7 +44726,7 @@ async function focusPanel(panelId) {
   const shouldShowPaneHud = Boolean(found && (!wasAlreadyFocused || wasMinimized || zoomChanged));
   if (wasAlreadyFocused) {
     const shouldInitTerminal = requestImmediateTerminalInit(panelId);
-    const layoutChanged = maybeApplyReadableBrowserPaneLayout(found.workspace.id, panelId, { render: false });
+    const layoutChanged = maybeApplyReadableBrowserPaneLayout(found.workspace.id, panelId, { render: false, autoLayout: false });
     if (wasMinimized || zoomChanged || layoutChanged) render();
     else if (shouldInitTerminal) scheduleRender();
     if (shouldShowPaneHud) showPaneSwitchHud(found.panel, found.workspace);
@@ -44071,11 +45142,6 @@ function updateRailButtons() {
   document.getElementById("notificationsRailButton").classList.toggle("is-active", state.inspectorMode === "notifications");
   document.getElementById("sessionsRailButton").classList.toggle("is-active", state.inspectorMode === "session");
   document.getElementById("settingsRailButton").classList.toggle("is-active", state.inspectorMode === "settings");
-}
-
-async function resetSession() {
-  await api("/api/session/reset", { method: "POST" });
-  toast("Session reset.");
 }
 
 function resolveTerminalPanel(panel = focusedPanel()) {
@@ -44536,6 +45602,7 @@ const appearanceResetSettings = [
   "backgroundReadability",
   "interfaceContrast",
   "interfaceDepth",
+  "terminalBackgroundImage",
   "terminalBackground",
   "terminalForeground",
   "terminalCursorColor"
@@ -44945,11 +46012,10 @@ function lookSettingUpdateFromValue(key, raw) {
   if (key === "accentIntensity") return optionIdAllowed(accentIntensityOptions, raw) ? raw : null;
   if (key === "surfaceTint") return optionIdAllowed(surfaceTintOptions, raw) ? raw : null;
   if (key === "backgroundImage") {
-    if (raw === null) return "";
-    if (typeof raw !== "string") return null;
-    const trimmed = stripWrappingQuotes(raw);
-    const normalized = normalizeBackgroundValue(raw);
-    return trimmed && !normalized ? null : normalized;
+    return backgroundSettingUpdateFromValue(raw);
+  }
+  if (key === "terminalBackgroundImage") {
+    return backgroundSettingUpdateFromValue(raw);
   }
   if (key === "backgroundOpacity") {
     if (raw === null || raw === "" || typeof raw === "boolean" || typeof raw === "object") return null;
@@ -44990,13 +46056,14 @@ function lookSettingsUpdatesFromPayload(payload) {
   return Object.keys(updates).length ? updates : null;
 }
 
-function applyLookSettingsUpdates(updates, options = {}) {
+async function applyLookSettingsUpdates(updates, options = {}) {
   if (!updates) {
     toast("Clipboard does not contain look settings.");
     return false;
   }
   const changed = updateSettings(updates);
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(updates, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     toast("Look settings already match.");
     return false;
   }
@@ -45072,11 +46139,12 @@ function toggleFocusMode(nextValue = !state.settings.focusMode, options = {}) {
   return true;
 }
 
-function resetAppearanceSettings(options = {}) {
+async function resetAppearanceSettings(options = {}) {
   const updates = {};
   for (const key of appearanceResetSettings) updates[key] = defaultSettings[key];
   const changed = updateSettings(updates, { immediate: true });
-  if (!changed) {
+  const clearedCount = await clearTerminalColorOverridesForUpdates(updates, { ...options, refreshSettings: false });
+  if (!changed && !clearedCount) {
     toast("Look settings already reset.");
     return false;
   }
@@ -45549,6 +46617,29 @@ async function readClipboardText() {
   return "";
 }
 
+function normalizeTerminalPasteText(text) {
+  return String(text ?? "").replace(/(?:\r\n|\r|\n)+$/u, "");
+}
+
+function terminalPasteLineCount(text) {
+  const value = String(text ?? "");
+  return value ? value.split(/\r\n|\r|\n/u).length : 0;
+}
+
+function shouldConfirmTerminalPaste(text) {
+  return Boolean(state.settings.terminalConfirmMultilinePaste && /(?:\r\n|\r|\n)/u.test(String(text ?? "")));
+}
+
+async function confirmTerminalPasteIfNeeded(text, panel) {
+  if (!shouldConfirmTerminalPaste(text)) return true;
+  const lineCount = terminalPasteLineCount(text);
+  return await showConfirmDialog({
+    title: "Paste multiple lines?",
+    message: `Paste ${lineCount} lines into ${panelDisplayTitle(panel, true)}. This can run commands immediately.`,
+    confirmLabel: "Paste"
+  });
+}
+
 async function sendTerminalInput(panelId, text) {
   const payload = String(text ?? "");
   if (!payload) return false;
@@ -45617,7 +46708,7 @@ async function copyActiveTerminalSelection(panel = activePanel()) {
     toast("Focus a terminal pane first.");
     return false;
   }
-  const selection = state.terminals.get(terminalPanel.id)?.term?.getSelection?.() || "";
+  const selection = terminalSelectionText(terminalPanel);
   if (!selection) {
     toast("Select terminal text first.");
     focusTerminalSession(terminalPanel.id);
@@ -45637,9 +46728,13 @@ async function pasteClipboardToTerminal(panel = activePanel()) {
     toast("Focus a terminal pane first.");
     return false;
   }
-  const clipboard = await readClipboardText();
+  const clipboard = normalizeTerminalPasteText(await readClipboardText());
   if (!clipboard) {
     toast("Clipboard is empty.");
+    focusTerminalSession(terminalPanel.id);
+    return false;
+  }
+  if (!await confirmTerminalPasteIfNeeded(clipboard, terminalPanel)) {
     focusTerminalSession(terminalPanel.id);
     return false;
   }
@@ -45937,6 +47032,56 @@ function consumeGlobalShortcut(event) {
   event.stopPropagation();
 }
 
+function terminalSelectionText(panel = activePanel()) {
+  const terminalPanel = resolveTerminalPanel(panel);
+  if (!terminalPanel) return "";
+  return state.terminals.get(terminalPanel.id)?.term?.getSelection?.() || "";
+}
+
+function isPlainTerminalCopyShortcut(event) {
+  if (!event || event.type !== "keydown" || event.altKey || event.metaKey) return false;
+  const key = String(event.key || "").toLowerCase();
+  return (event.ctrlKey && !event.shiftKey && key === "c")
+    || (event.ctrlKey && !event.shiftKey && event.key === "Insert");
+}
+
+function isPlainTerminalPasteShortcut(event) {
+  if (!event || event.type !== "keydown" || event.altKey || event.metaKey) return false;
+  const key = String(event.key || "").toLowerCase();
+  return (event.ctrlKey && !event.shiftKey && key === "v")
+    || (!event.ctrlKey && event.shiftKey && event.key === "Insert");
+}
+
+function handleTerminalCustomKeyEvent(event, panel) {
+  if (isPlainTerminalCopyShortcut(event)) {
+    if (!terminalSelectionText(panel)) return true;
+    void copyActiveTerminalSelection(panel);
+    return false;
+  }
+  if (isPlainTerminalPasteShortcut(event)) {
+    void pasteClipboardToTerminal(panel);
+    return false;
+  }
+  return !isTerminalAppShortcutEvent(event);
+}
+
+function isTerminalAppShortcutEvent(event) {
+  if (!event || event.type !== "keydown") return false;
+  const key = String(event.key || "").toLowerCase();
+  if (event.key === "F3") return true;
+  if (paneTextSizeShortcutKind(event)) return true;
+  if (!event.ctrlKey || event.metaKey) return false;
+  if (event.altKey && !/^[1-9]$/.test(event.key || "") && key !== "backspace") return false;
+  if (event.altKey && /^[1-9]$/.test(event.key || "")) return true;
+  if (event.altKey && key === "backspace") return true;
+  if (!event.shiftKey && !event.altKey && (event.key === "," || event.code === "Comma")) return true;
+  if (event.shiftKey && event.key === "Enter") return true;
+  if (event.shiftKey) return ["c", "v", "f", "p", "r", "m", "t", "l", "tab", "backspace"].includes(key);
+  if (event.key === "PageDown" || event.key === "PageUp") return true;
+  if (/^[1-9]$/.test(event.key || "")) return true;
+  return ["f", "n", "t", "i", "b", "k", "w", "tab"].includes(key);
+}
+
 function paneTextSizeShortcutKind(event) {
   if (!event.ctrlKey || event.altKey || event.metaKey) return "";
   const key = event.key || "";
@@ -45963,15 +47108,6 @@ function runTerminalKeyShortcut(event, action) {
   return true;
 }
 
-function lockBrowserPanelZoom(panel) {
-  const browserPanel = resolveBrowserPanel(panel);
-  if (!browserPanel) return false;
-  markInteractedPanel(browserPanel.id);
-  const session = state.browserViews.get(browserPanel.id);
-  if (session?.view) lockBrowserViewZoom(session.view, { force: true });
-  return true;
-}
-
 function handlePaneTextSizeKeyShortcut(event, kind) {
   if (!kind) return false;
   const terminalPanel = terminalPanelForShortcutEvent(event);
@@ -45984,7 +47120,8 @@ function handlePaneTextSizeKeyShortcut(event, kind) {
   const browserPanel = browserPanelForShortcutEvent(event);
   if (!browserPanel) return false;
   consumeGlobalShortcut(event);
-  lockBrowserPanelZoom(browserPanel);
+  if (kind === "reset") changeBrowserZoom("reset", { panel: browserPanel, toast: false, status: true });
+  else changeBrowserZoom(kind === "increase" ? 1 : -1, { panel: browserPanel, toast: false, status: true });
   return true;
 }
 
@@ -46003,8 +47140,6 @@ function announceNewAttention(previous, next) {
 }
 
 document.getElementById("newWorkspaceButton").onclick = () => createWorkspace();
-const resetSessionButton = document.getElementById("resetSessionButton");
-if (resetSessionButton) resetSessionButton.onclick = () => resetSession();
 document.getElementById("splitRightButton").onclick = () => splitActivePanel("right");
 document.getElementById("splitDownButton").onclick = () => splitActivePanel("down");
 document.getElementById("toolsMenuButton").onclick = showToolbarMenu;
@@ -46019,6 +47154,7 @@ observeSurfaceTabOverflow();
 document.getElementById("paletteButton").onclick = () => {
   openPalette();
 };
+if (elements.paletteClose) elements.paletteClose.onclick = () => closePalette();
 document.getElementById("notificationsRailButton").onclick = () => openInspector("notifications");
 document.getElementById("sessionsRailButton").onclick = () => openInspector("session");
 document.getElementById("settingsRailButton").onclick = () => openInspector("settings");
@@ -46115,6 +47251,14 @@ window.addEventListener("keydown", (event) => {
     cycleWorkspace(-1);
   } else if (event.key === "F3") {
     runTerminalKeyShortcut(event, event.shiftKey ? findPreviousInTerminal : findNextInTerminal);
+  } else if (isPlainTerminalCopyShortcut(event)) {
+    const panel = terminalPanelForShortcutEvent(event);
+    if (panel && terminalSelectionText(panel)) {
+      consumeGlobalShortcut(event);
+      copyActiveTerminalSelection(panel);
+    }
+  } else if (isPlainTerminalPasteShortcut(event)) {
+    runTerminalKeyShortcut(event, pasteClipboardToTerminal);
   } else if (event.ctrlKey && event.shiftKey && key === "c") {
     runTerminalKeyShortcut(event, copyActiveTerminalSelection);
   } else if (event.ctrlKey && event.shiftKey && key === "v") {

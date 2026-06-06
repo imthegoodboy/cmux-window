@@ -2,10 +2,20 @@ export function attachHorizontalWheelScroll(element) {
   if (!element) return () => {};
   const onWheel = (event) => {
     if (event.ctrlKey || element.scrollWidth <= element.clientWidth) return;
-    const delta = event.deltaX || event.deltaY;
+    const scale = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 40
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? Math.max(1, element.clientWidth)
+        : 1;
+    const delta = (event.deltaX || event.deltaY) * scale;
     if (!delta) return;
+    const previous = element.scrollLeft;
+    const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
+    const next = Math.max(0, Math.min(maxScrollLeft, previous + delta));
+    if (Math.abs(next - previous) < 1) return;
     event.preventDefault();
-    element.scrollLeft += delta;
+    event.stopPropagation();
+    element.scrollLeft = next;
   };
   element.addEventListener("wheel", onWheel, { passive: false });
   return () => element.removeEventListener("wheel", onWheel);

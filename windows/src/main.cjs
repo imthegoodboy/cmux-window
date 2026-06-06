@@ -616,7 +616,10 @@ async function createWindow() {
     }
   });
 
-  mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+  });
   mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
     log(`renderer console level=${level} ${sourceId}:${line} ${message}`);
   });

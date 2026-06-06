@@ -229,6 +229,37 @@ body.theme-copper {
   --color-muted: oklch(75% 0.018 55);
 }
 
+body.theme-light {
+  color-scheme: light;
+  --color-canvas: oklch(96% 0.006 235);
+  --color-chrome: oklch(98% 0.004 235);
+  --color-rail: oklch(94% 0.008 235);
+  --color-pane: oklch(99% 0.003 235);
+  --color-pane-warm: oklch(97% 0.007 225);
+  --color-pane-active: oklch(94% 0.014 225);
+  --color-line: oklch(82% 0.015 235);
+  --color-line-strong: oklch(68% 0.022 235);
+  --color-input: color-mix(in oklch, var(--color-pane) 84%, var(--color-canvas));
+  --color-text: oklch(22% 0.018 250);
+  --color-muted: oklch(48% 0.022 250);
+  --color-faint: oklch(62% 0.018 250);
+  --color-accent: oklch(58% 0.2 255);
+  --color-accent-hover: oklch(52% 0.21 255);
+  --color-accent-ink: oklch(99% 0.01 245);
+  --color-focus: color-mix(in oklch, var(--color-accent) 76%, white 24%);
+  --color-selection: oklch(82% 0.08 245);
+  --color-glass: oklch(99% 0.003 235 / 82%);
+  --color-terminal-gutter: oklch(91% 0.011 235);
+  --scrollbar-thumb: color-mix(in oklch, var(--color-line-strong) 62%, transparent);
+  --scrollbar-thumb-hover: color-mix(in oklch, var(--color-muted) 70%, transparent);
+  --shadow-soft: 0 12px 34px color-mix(in oklch, var(--color-muted) 18%, transparent);
+  --depth-pane-shadow: inset 0 1px 0 color-mix(in oklch, white 68%, transparent);
+  --depth-topbar-shadow: 0 10px 24px -24px color-mix(in oklch, var(--color-muted) 30%, transparent);
+  --depth-sidebar-shadow: 8px 0 24px -28px color-mix(in oklch, var(--color-muted) 34%, transparent);
+  --depth-inspector-shadow: -10px 0 26px -30px color-mix(in oklch, var(--color-muted) 36%, transparent);
+  --depth-card-shadow: 0 8px 24px -22px color-mix(in oklch, var(--color-muted) 32%, transparent);
+}
+
 body.theme-contrast {
   --color-canvas: oklch(7% 0.004 255);
   --color-chrome: oklch(12% 0.006 255);
@@ -1086,6 +1117,7 @@ body.reduce-motion *::after {
 .sidebar-action,
 .palette-quick-action,
 .palette-item,
+.palette-close,
 .notification-action,
 .window-control {
   border: 1px solid transparent;
@@ -1198,6 +1230,7 @@ body.reduce-motion *::after {
 .setting-control:focus-visible,
 .setting-select:focus-visible,
 .palette-input:focus-visible,
+.palette-close:focus-visible,
 .sidebar-action:focus-visible,
 .settings-action:focus-visible,
 .settings-preset:focus-visible,
@@ -1276,6 +1309,7 @@ body.reduce-motion *::after {
 .context-action:active,
 .palette-quick-action:active,
 .palette-item:active,
+.palette-close:active,
 .rail-button:active,
 .notification-action:active,
 .window-control:active {
@@ -1813,6 +1847,7 @@ body.reduce-motion *::after {
 .browser-tab-new svg,
 .browser-tab-close svg,
 .settings-search-clear svg,
+.palette-close svg,
 .window-control svg,
 .quick-action-icon svg {
   width: 16px;
@@ -5563,6 +5598,10 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 
+webview.browser-view {
+  display: inline-flex;
+}
+
 .browser-error {
   grid-area: 1 / 1;
   z-index: 2;
@@ -6596,6 +6635,22 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   border-bottom: 1px solid var(--color-line);
 }
 
+.inspector-head .icon-button {
+  order: -1;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-color: color-mix(in oklch, var(--color-line) 78%, transparent);
+  background: color-mix(in oklch, var(--color-pane-surface) 82%, var(--color-rail-surface) 18%);
+  color: var(--color-text);
+  box-shadow: none;
+}
+
+.inspector-head .icon-button:hover {
+  border-color: color-mix(in oklch, var(--color-accent) 38%, var(--color-line-strong) 62%);
+  background: color-mix(in oklch, var(--color-accent) 12%, var(--color-pane-active-surface) 88%);
+}
+
 .inspector-head > div {
   min-width: 0;
   flex: 1;
@@ -6617,7 +6672,9 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-4);
+  scrollbar-gutter: stable;
 }
 
 .notification-card,
@@ -6656,7 +6713,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   top: 0;
   z-index: 3;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 34px;
   gap: var(--space-1);
   padding-bottom: var(--space-2);
   background: var(--color-canvas-surface);
@@ -6694,10 +6751,6 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   padding-bottom: 0;
 }
 
-.settings-search.has-query {
-  grid-template-columns: minmax(0, 1fr) 34px;
-}
-
 .settings-search-input {
   width: 100%;
   height: 38px;
@@ -6713,13 +6766,15 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   background: var(--color-pane);
   color: var(--color-muted);
   cursor: pointer;
-  display: none;
+  display: grid;
   font-family: var(--font-mono);
   place-items: center;
+  opacity: .78;
 }
 
-.settings-search.has-query .settings-search-clear {
-  display: grid;
+.settings-search.has-query .settings-search-clear,
+.settings-search.is-focused .settings-search-clear {
+  opacity: 1;
 }
 
 .settings-search-feedback {
@@ -6756,7 +6811,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   margin-bottom: var(--space-4);
   scroll-margin-top: 132px;
   content-visibility: auto;
-  contain-intrinsic-size: auto 420px;
+  contain-intrinsic-size: 720px;
 }
 
 .settings-section [data-settings-search],
@@ -6765,19 +6820,17 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   scroll-margin-top: 132px;
 }
 
-.settings-react-host.is-search-layout-needed ~ .settings-section {
+.settings-react-host.is-searching ~ .settings-section,
+.settings-react-host.is-search-layout-needed ~ .settings-section,
+.settings-react-host.is-scroll-layout-needed ~ .settings-section {
   content-visibility: visible;
   contain-intrinsic-size: none;
 }
 
-.settings-react-host:not(.is-search-layout-needed) ~ .settings-section > :not(.settings-section-title) {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 96px;
-}
-
-.settings-react-host:not(.is-search-layout-needed) ~ .settings-section > .quick-setup-overview,
-.settings-react-host:not(.is-search-layout-needed) ~ .settings-section > .settings-disclosure {
-  contain-intrinsic-size: auto 240px;
+.settings-react-host.is-searching ~ .settings-section > *,
+.settings-react-host.is-search-layout-needed ~ .settings-section > *,
+.settings-react-host.is-scroll-layout-needed ~ .settings-section > * {
+  content-visibility: visible;
 }
 
 .settings-page-switcher {
@@ -6815,15 +6868,11 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 
 .settings-page-tabs {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
   gap: var(--space-1);
   min-width: 0;
   overflow: visible;
   padding: 0;
-}
-
-.settings-page-tabs::-webkit-scrollbar {
-  display: none;
 }
 
 @container (max-width: 419px) {
@@ -6844,6 +6893,8 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 
 .settings-page-tab {
   height: 32px;
+  width: 100%;
+  min-width: 0;
   display: inline-grid;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
@@ -6900,7 +6951,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
 
 @container (max-width: 559px) {
   .settings-page-tabs {
-    grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
   }
 
   .settings-page-tab {
@@ -11402,6 +11453,13 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   gap: 5px;
 }
 
+.quick-overview-controls-actions .settings-action-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .quick-overview-controls-actions .settings-action-icon {
   width: 14px;
   height: 14px;
@@ -12571,7 +12629,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   color: color-mix(in oklch, var(--color-success) 68%, var(--color-text) 32%);
 }
 
-@container (max-width: 380px) {
+@container (max-width: 560px) {
   .quick-settings-shortcut-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -12662,7 +12720,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   .quick-overview-controls-actions {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(88px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(116px, 100%), 1fr));
     justify-content: flex-start;
     max-width: none;
     padding: 0;
@@ -12682,6 +12740,13 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   .quick-overview-controls-actions .settings-action {
     width: 100%;
     max-width: none;
+    min-height: 30px;
+    height: auto;
+  }
+
+  .quick-overview-controls-actions .settings-action-label {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .quick-overview-library-head {
@@ -16508,6 +16573,7 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   z-index: 120;
   width: min(252px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
+  overflow-x: hidden;
   display: grid;
   gap: var(--space-2);
   overflow-y: auto;
@@ -17161,6 +17227,7 @@ textarea.dialog-input {
 }
 
 .palette-dialog {
+  position: relative;
   width: min(660px, calc(100vw - 32px));
   overflow: hidden;
   border: 1px solid var(--color-line-strong);
@@ -17169,10 +17236,31 @@ textarea.dialog-input {
   box-shadow: 0 20px 80px oklch(5% 0.01 105 / 55%);
 }
 
+.palette-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-color: color-mix(in oklch, var(--color-line) 70%, transparent);
+  background: color-mix(in oklch, var(--color-pane) 76%, transparent);
+  color: var(--color-muted);
+}
+
+.palette-close:hover {
+  border-color: var(--color-line-strong);
+  background: var(--color-pane-active);
+  color: var(--color-text);
+}
+
 .palette-input {
   width: 100%;
   height: 46px;
-  padding: 0 var(--space-4);
+  padding: 0 48px 0 var(--space-4);
   border: 0;
   border-bottom: 1px solid var(--color-line);
   border-radius: 0;
@@ -17182,7 +17270,9 @@ textarea.dialog-input {
 .palette-list {
   max-height: 360px;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: var(--space-2);
+  scrollbar-gutter: stable;
 }
 
 .palette-quick-actions {

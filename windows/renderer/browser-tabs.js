@@ -21,10 +21,12 @@ export function normalizeBrowserTab(entry, fallbackUrl = defaultSettings.browser
   const url = normalizeBrowserPageUrl(entry?.url || entry?.value || fallbackUrl);
   if (!url) return null;
   const title = String(entry?.title || "").trim().slice(0, 80) || browserTabTitle(url);
+  const titleLocked = entry?.titleLocked === true;
   return {
     id: String(entry?.id || "").trim().slice(0, 80) || createBrowserTabId(),
     url,
-    title
+    title,
+    titleLocked
   };
 }
 

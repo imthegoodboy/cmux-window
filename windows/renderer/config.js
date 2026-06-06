@@ -24,6 +24,7 @@ export const defaultSettings = {
   browserSuspendInactive: true,
   browserChromeMode: "compact",
   browserZoom: "100",
+  browserFullscreenMode: "pane",
   density: "compact",
   paneHeaderMode: "auto",
   paneActionMode: "essential",
@@ -56,7 +57,7 @@ export const defaultSettings = {
   tabSize: "compact",
   tabCloseMode: "minimal",
   tabActiveStyle: "subtle",
-  addTabStyle: "compact",
+  addTabStyle: "labeled",
   cornerStyle: "crisp",
   paneDividerSize: "slim",
   paneDividerStyle: "line",
@@ -86,8 +87,10 @@ export const defaultSettings = {
   terminalStartupMode: "fast",
   terminalPauseInactiveOutput: true,
   terminalSmoothResumedOutput: true,
+  terminalConfirmMultilinePaste: true,
   terminalCursorStyle: "bar",
   terminalCursorBlink: true,
+  terminalBackgroundImage: "",
   terminalBackground: "",
   terminalForeground: "",
   terminalCursorColor: "",
@@ -107,6 +110,7 @@ export const themeOptions = [
   ["lagoon", label("theme.lagoon", "Lagoon")],
   ["plum", label("theme.plum", "Plum")],
   ["copper", label("theme.copper", "Copper")],
+  ["light", label("theme.light", "Light")],
   ["contrast", label("theme.contrast", "High Contrast")],
   ["paper", label("theme.paper", "Paper Dark")]
 ];
@@ -199,6 +203,14 @@ export const themePreviewOptions = [
     rail: "oklch(16% 0.022 55)",
     line: "oklch(35% 0.032 55)",
     accent: "oklch(82% 0.13 55)"
+  },
+  {
+    id: "light",
+    canvas: "oklch(96% 0.006 235)",
+    pane: "oklch(99% 0.003 235)",
+    rail: "oklch(94% 0.008 235)",
+    line: "oklch(82% 0.015 235)",
+    accent: "oklch(58% 0.2 255)"
   },
   {
     id: "contrast",
@@ -436,6 +448,11 @@ export const browserZoomOptions = [
   ["100", label("browserZoom.100", "100%"), label("browserZoom.100.body", "Default browser scale")],
   ["110", label("browserZoom.110", "110%"), label("browserZoom.110.body", "Larger page text")],
   ["125", label("browserZoom.125", "125%"), label("browserZoom.125.body", "Readable small panes")]
+];
+
+export const browserFullscreenOptions = [
+  ["pane", label("browserFullscreen.pane", "Stay in pane"), label("browserFullscreen.pane.body", "Keep video and web fullscreen requests inside cmux")],
+  ["native", label("browserFullscreen.native", "Allow fullscreen"), label("browserFullscreen.native.body", "Let web pages take over the app window")]
 ];
 
 export const terminalProfiles = [
@@ -826,6 +843,7 @@ export const terminalAppearanceKeys = new Set([
   "terminalScrollback",
   "terminalCursorStyle",
   "terminalCursorBlink",
+  "terminalBackgroundImage",
   "terminalBackground",
   "terminalForeground",
   "terminalCursorColor"

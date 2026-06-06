@@ -27,9 +27,19 @@
 
 ## Unofficial Windows Build
 
-This repository hosts an unofficial community Windows build of cmux for users who want to try the Electron-based Windows port. It is not an official upstream cmux release, but it keeps the same cmux spirit: workspaces, panes, browser surfaces, notifications, customization, and CLI control adapted for Windows.
+This repository also hosts an unofficial community Windows build of cmux for users who want to try the Electron-based Windows port. It is not an official upstream cmux release, but it keeps the same cmux spirit on Windows: terminal workspaces, split panes, browser panes, notifications, session restore, CLI control, and deep visual customization.
 
-Download `cmux-0.1.0-setup.exe` from this repository's [Releases](https://github.com/imthegoodboy/cmux-window/releases) page. The app and installer are named `cmux`; this repository's Windows build is an unofficial community build. The official macOS release remains available from [manaflow-ai/cmux](https://github.com/manaflow-ai/cmux).
+Download `cmux-0.1.1-setup.exe` from this repository's [Releases](https://github.com/imthegoodboy/cmux-window/releases) page. The app, executable, shortcuts, and installer are named `cmux`. The Windows build is packaged as a normal per-user Windows installer with Start Menu and desktop shortcuts, uses the cmux icon, and requests normal user permissions by default.
+
+Windows build highlights:
+
+- Terminal panes with font, spacing, shell, cursor, scrollback, color, and background controls.
+- Browser panes with tabs, address controls, right/below pane placement, drag between browser panes, configurable home page, zoom, fullscreen handling, and external browser handoff.
+- Light and dark themes, accent palettes, background images, density controls, pane chrome options, tab styles, and saved Settings profiles.
+- User-friendly clipboard behavior for Windows terminals: `Ctrl+C` copies selected text, `Ctrl+V` pastes, and `Ctrl+C` still interrupts the shell when no text is selected.
+- Performance-focused renderer updates for large terminal output, browser pane sizing, crowded tab strips, and settings search.
+
+This Windows community build is packaged by Nikku. The official macOS release remains available from [manaflow-ai/cmux](https://github.com/manaflow-ai/cmux).
 
 ## Features
 
