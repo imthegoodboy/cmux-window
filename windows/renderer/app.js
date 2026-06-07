@@ -756,6 +756,11 @@ const settingsPanelWideWidthMigrationStorageKey = "cmux.settingsPanelWideWidthMi
 const inspectorWidthMin = 520;
 const inspectorWidthMax = 720;
 const launchToken = new URLSearchParams(location.search).get("token") || "";
+if (launchToken && window.history?.replaceState) {
+  const cleanUrl = new URL(location.href);
+  cleanUrl.searchParams.delete("token");
+  window.history.replaceState(window.history.state, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+}
 const eventReconnectMinDelayMs = 250;
 const eventReconnectMaxDelayMs = 5000;
 const embeddedGooglePolishState = new WeakMap();

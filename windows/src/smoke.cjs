@@ -365,6 +365,11 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
       || rendererConfig.includes('"terminalBackgroundImage",\n  "terminalBackground"'),
     "new terminal background default should be part of terminal appearance refresh state"
   );
+  assert(
+    rendererApp.includes('cleanUrl.searchParams.delete("token")')
+      && rendererApp.includes("window.history.replaceState"),
+    "renderer should remove the launch token from the visible URL after startup"
+  );
   assert(rendererConfig.includes('addTabStyle: "compact"'), "new pane add tabs should default to compact controls");
   assert(rendererConfig.includes("terminalConfirmMultilinePaste: true"), "multi-line terminal paste confirmation should be enabled by default");
   const releaseCleanupScript = fs.readFileSync(path.join(__dirname, "close-release-processes.cjs"), "utf8");
