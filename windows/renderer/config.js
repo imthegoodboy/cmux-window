@@ -57,7 +57,7 @@ export const defaultSettings = {
   tabSize: "compact",
   tabCloseMode: "minimal",
   tabActiveStyle: "subtle",
-  addTabStyle: "labeled",
+  addTabStyle: "compact",
   cornerStyle: "crisp",
   paneDividerSize: "slim",
   paneDividerStyle: "line",
