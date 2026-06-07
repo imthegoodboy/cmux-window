@@ -365,6 +365,7 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
       || rendererConfig.includes('"terminalBackgroundImage",\n  "terminalBackground"'),
     "new terminal background default should be part of terminal appearance refresh state"
   );
+  assert(rendererConfig.includes('addTabStyle: "compact"'), "new pane add tabs should default to compact controls");
   assert(rendererConfig.includes("terminalConfirmMultilinePaste: true"), "multi-line terminal paste confirmation should be enabled by default");
 
   const rendererCss = await fetchText(`${info.url}styles.css`, "renderer styles");
@@ -392,8 +393,13 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
     "renderer styles should not force-hide titlebar launcher buttons"
   );
   assert(
-    /\.workspace-row:not\(\.is-active\) \.workspace-close\s*\{\s*opacity:\s*\.52;\s*pointer-events:\s*auto;\s*\}/.test(rendererCss),
+    /\.workspace-row:not\(\.is-active\) \.workspace-close\s*\{\s*opacity:\s*\.68;\s*pointer-events:\s*auto;\s*\}/.test(rendererCss),
     "workspace close button should remain visible and clickable on inactive rows"
+  );
+  assert(
+    rendererApp.includes("terminalPaneChromeSettings")
+      && rendererApp.includes("terminalPaneChromeSettings.has(key)"),
+    "terminal background color changes should refresh visible pane chrome"
   );
 
   const stateResponse = await fetch(`${info.url}api/state`);

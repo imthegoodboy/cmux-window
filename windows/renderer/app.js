@@ -6563,6 +6563,10 @@ const backgroundTuningSettings = [
   "backgroundReadability"
 ];
 
+const terminalPaneChromeSettings = new Set([
+  "terminalBackground"
+]);
+
 const backgroundSetupSettings = [
   "backgroundImage",
   ...backgroundTuningSettings
@@ -7470,7 +7474,7 @@ function updateSettings(updates, options = {}) {
   if (options.immediate) saveSettings();
   else scheduleSettingsSave();
   applySettings();
-  if (changedKeys.some((key) => backgroundTuningSettings.includes(key))) {
+  if (changedKeys.some((key) => backgroundTuningSettings.includes(key) || terminalPaneChromeSettings.has(key))) {
     refreshVisiblePaneChromeState();
   }
   const terminalAppearanceChanged = changedKeys.filter((key) => terminalAppearanceKeys.has(key));
