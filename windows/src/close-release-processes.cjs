@@ -67,6 +67,28 @@ if ([System.IO.Directory]::Exists($releaseRoot)) {
     }
   }
 }
+$artifactPatterns = @(
+  "cmux-*-setup.exe",
+  "cmux-*-setup.exe.blockmap"
+)
+$artifactTargets = @()
+if ([System.IO.Directory]::Exists($releaseParent)) {
+  foreach ($pattern in $artifactPatterns) {
+    Get-ChildItem -Path $releaseParent -File -Filter $pattern -ErrorAction SilentlyContinue | ForEach-Object {
+      $artifactPath = [System.IO.Path]::GetFullPath($_.FullName)
+      if (-not $artifactPath.StartsWith($releaseParentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove release artifact outside $releaseParent"
+      }
+      $artifactTargets += $_
+    }
+  }
+}
+if ($artifactTargets.Count -gt 0) {
+  foreach ($artifact in $artifactTargets) {
+    Remove-Item -LiteralPath $artifact.FullName -Force -ErrorAction Stop
+  }
+  Write-Output ("Removed {0} stale installer artifact(s)." -f $artifactTargets.Count)
+}
 exit 0
 `;
 

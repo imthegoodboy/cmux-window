@@ -367,6 +367,13 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   );
   assert(rendererConfig.includes('addTabStyle: "compact"'), "new pane add tabs should default to compact controls");
   assert(rendererConfig.includes("terminalConfirmMultilinePaste: true"), "multi-line terminal paste confirmation should be enabled by default");
+  const releaseCleanupScript = fs.readFileSync(path.join(__dirname, "close-release-processes.cjs"), "utf8");
+  assert(
+    releaseCleanupScript.includes('"cmux-*-setup.exe"')
+      && releaseCleanupScript.includes('"cmux-*-setup.exe.blockmap"')
+      && releaseCleanupScript.includes("Removed {0} stale installer artifact(s)."),
+    "Windows release cleanup should remove stale installer artifacts before packaging"
+  );
 
   const rendererCss = await fetchText(`${info.url}styles.css`, "renderer styles");
   assert(rendererCss.includes("grid-template-rows: minmax(0, 1fr);"), "root shell should define a single full-height grid row");
