@@ -197,6 +197,15 @@ function withTemporaryEnv(values, fn) {
   const rendererScrollUtils = fs.readFileSync(path.join(__dirname, "..", "renderer", "scroll-utils.js"), "utf8");
   assert(rendererApp.includes("Use everywhere"), "active background panel should expose a use-everywhere action");
   assert(
+    rendererApp.includes("function parkInactivePaneNodes")
+      && rendererApp.includes("blurPaneFocusBeforeDetach(child)")
+      && rendererApp.includes("host.appendChild(child)")
+      && rendererApp.includes('host.closest(".pane-keepalive")')
+      && rendererApp.includes('content.closest(".pane-keepalive")')
+      && rendererApp.includes("resumeTerminalOutputAfterActivityChange(liveVisiblePanelIds)"),
+    "workspace switches should park inactive terminal/browser panes without focus leaks or hidden resize work"
+  );
+  assert(
     /cycleTemplate\.dataset\.backgroundAction = "cycle-template";[\s\S]*active background image cycle template choose paste save copy open/.test(rendererApp),
     "active background panel should expose a direct cycle-template action"
   );
