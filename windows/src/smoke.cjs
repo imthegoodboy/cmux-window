@@ -9,7 +9,7 @@ if (!Object.hasOwn(process.env, "CMUX_WINDOWS_DISABLE_PTY")) {
   process.env.CMUX_WINDOWS_DISABLE_PTY = "1";
 }
 
-const { createCmuxWindowsRuntime } = require("./server.cjs");
+const { createCmuxWindowsRuntime, __testing } = require("./server.cjs");
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `cmux-windows-smoke-${process.pid}-`));
 const pipeName = process.platform === "win32"
@@ -111,6 +111,27 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   throw new Error(`${label} timed out`);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTemporaryEnv(values, fn) {
+  const previous = new Map();
+  for (const key of Object.keys(values)) {
+    previous.set(key, Object.hasOwn(process.env, key) ? process.env[key] : undefined);
+    if (values[key] === undefined) delete process.env[key];
+    else process.env[key] = values[key];
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 (async () => {
   const repairDataDir = fs.mkdtempSync(path.join(os.tmpdir(), `cmux-windows-repair-${process.pid}-`));
   const repairPipeName = process.platform === "win32"
@@ -169,10 +190,21 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
   assert(rendererHtml.includes('id="splitRightButton"'), "renderer shell should keep split terminal in the titlebar");
   assert(!rendererHtml.includes('id="newTerminalButton"'), "renderer shell should keep the terminal launcher out of the titlebar");
   assert(!rendererHtml.includes('id="newBrowserButton"'), "renderer shell should keep the browser launcher out of the titlebar");
+  assert(!rendererHtml.includes('id="settingsButton"'), "renderer shell should keep settings out of the titlebar");
+  assert(rendererHtml.includes('id="paneKeepAlive"'), "renderer shell should keep inactive pane DOM connected across workspace switches");
 
   const rendererApp = await fetchText(`${info.url}app.js`, "renderer app");
   const rendererScrollUtils = fs.readFileSync(path.join(__dirname, "..", "renderer", "scroll-utils.js"), "utf8");
   assert(rendererApp.includes("Use everywhere"), "active background panel should expose a use-everywhere action");
+  assert(
+    rendererApp.includes("function parkInactivePaneNodes")
+      && rendererApp.includes("blurPaneFocusBeforeDetach(child)")
+      && rendererApp.includes("host.appendChild(child)")
+      && rendererApp.includes('host.closest(".pane-keepalive")')
+      && rendererApp.includes('content.closest(".pane-keepalive")')
+      && rendererApp.includes("resumeTerminalOutputAfterActivityChange(liveVisiblePanelIds)"),
+    "workspace switches should park inactive terminal/browser panes without focus leaks or hidden resize work"
+  );
   assert(
     /cycleTemplate\.dataset\.backgroundAction = "cycle-template";[\s\S]*active background image cycle template choose paste save copy open/.test(rendererApp),
     "active background panel should expose a direct cycle-template action"
@@ -345,6 +377,63 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
     "new terminal background default should be part of terminal preview refresh state"
   );
   const rendererConfig = fs.readFileSync(path.join(__dirname, "..", "renderer", "config.js"), "utf8");
+  const {
+    stabilizeTerminalCursorOutput,
+    terminalCursorChoreographyActive,
+    terminalPromptCursorColumn
+  } = await import(pathToFileURL(path.join(__dirname, "..", "renderer", "terminal-output.mjs")).href);
+  const splitCursorState = {};
+  assert(stabilizeTerminalCursorOutput("\x1b[?2", splitCursorState) === "", "partial cursor visibility control should be buffered");
+  assert(splitCursorState.cursorControlTail === "\x1b[?2", "split cursor visibility control should preserve its tail");
+  assert(
+    stabilizeTerminalCursorOutput("5lredraw", splitCursorState) === "\x1b[?25lredraw",
+    "split cursor-hide controls should be preserved so redraws do not expose a moving cursor"
+  );
+  assert(stabilizeTerminalCursorOutput("more output", splitCursorState) === "more output", "plain output should be preserved");
+  assert(!("cursorHiddenByOutput" in splitCursorState), "cursor output should not track hidden state or force cmux hide/show loops");
+  assert(
+    stabilizeTerminalCursorOutput("\x1b[?25lredraw\x1b[?25hdone", {}) === "\x1b[?25lredraw\x1b[?25hdone",
+    "cursor output should preserve explicit app hide/show controls"
+  );
+  assert(
+    stabilizeTerminalCursorOutput("\x1b[?12h\x1b[1 q\x1b[5 q", {}) === "\x1b[?12l\x1b[2 q\x1b[6 q",
+    "cursor output should neutralize blink mode while preserving the requested cursor shape"
+  );
+  assert(
+    stabilizeTerminalCursorOutput("\x1b[?12;25h", {}) === "\x1b[?12l\x1b[?25h",
+    "cursor output should neutralize combined blink-and-show private mode controls"
+  );
+  const splitCombinedCursorState = {};
+  assert(stabilizeTerminalCursorOutput("\x1b[?12;", splitCombinedCursorState) === "", "partial combined private mode controls should be buffered");
+  assert(
+    stabilizeTerminalCursorOutput("25hredraw", splitCombinedCursorState) === "\x1b[?12l\x1b[?25hredraw",
+    "split combined private mode controls should normalize after the final byte arrives"
+  );
+  const cursorChoreographyState = {};
+  stabilizeTerminalCursorOutput("\x1b[?25l\x1b[2J\x1b[H\x1b[K", cursorChoreographyState);
+  assert(terminalCursorChoreographyActive(cursorChoreographyState), "first hide-and-redraw burst should activate stable cursor choreography before the cursor chases output");
+  const plainCursorState = {};
+  stabilizeTerminalCursorOutput("plain terminal output", plainCursorState);
+  assert(!terminalCursorChoreographyActive(plainCursorState), "plain terminal output should not activate stable cursor choreography");
+  stabilizeTerminalCursorOutput("\x1b[?25h\x1b[?2026h\x1b[10;3H\x1b[?25l\x1b[1;2H\x1b[K\x1b[?25h", cursorChoreographyState);
+  assert(terminalCursorChoreographyActive(cursorChoreographyState), "repeated hide/show redraw controls should activate behavior-based cursor stabilization");
+  assert(terminalPromptCursorColumn("› Explain this codebase") === "› Explain this codebase".length, "TUI prompt cursor should pin to the prompt input end");
+  assert(terminalPromptCursorColumn("PS C:\\Users\\parth>  ") === "PS C:\\Users\\parth>".length, "PowerShell prompt cursor should pin to the shell prompt end");
+  assert(terminalPromptCursorColumn("PS C:\\Users\\parth> echo hi") === "PS C:\\Users\\parth> echo hi".length, "PowerShell prompt cursor should follow typed input");
+  assert(terminalPromptCursorColumn("C:\\Users\\parth> ") === "C:\\Users\\parth>".length, "cmd prompt cursor should pin to the shell prompt end");
+  assert(terminalPromptCursorColumn("C:\\Users\\parth> dir") === "C:\\Users\\parth> dir".length, "cmd prompt cursor should follow typed input");
+  assert(terminalPromptCursorColumn("parth@host:~/repo$ ") === "parth@host:~/repo$".length, "POSIX shell prompt cursor should pin to the shell prompt end");
+  assert(terminalPromptCursorColumn("parth@host:~/repo$ npm test") === "parth@host:~/repo$ npm test".length, "POSIX shell prompt cursor should follow typed input");
+  assert(terminalPromptCursorColumn("status 18") === -1, "status output should not be mistaken for a prompt");
+  assert(terminalPromptCursorColumn("100%") === -1, "progress output should not be mistaken for a shell prompt");
+  assert(terminalPromptCursorColumn("│ >_ OpenAI Codex (v0.137.0) │") === -1, "Codex header glyph should not be mistaken for the input prompt");
+  assert(terminalPromptCursorColumn("> menu item 1") === -1, "TUI menu selection rows should not be mistaken for prompts");
+  assert(terminalPromptCursorColumn("? for shortcuts · ← for agents") === -1, "TUI help footer rows should not be mistaken for prompts");
+  assert(__testing.terminalBacklogSafeSlice("abcdef", 3) === "def", "terminal backlog trim should keep normal trailing text");
+  assert(__testing.terminalBacklogSafeSlice("aaaa\x1b[31mred", 5) === "red", "terminal backlog trim should not replay partial CSI controls");
+  assert(__testing.terminalBacklogSafeSlice("aaaa\x1b]0;title\x07prompt", 8) === "prompt", "terminal backlog trim should not replay partial OSC BEL controls");
+  assert(__testing.terminalBacklogSafeSlice("aaaa\x1b]2;title\x1b\\prompt", 8) === "prompt", "terminal backlog trim should not replay partial OSC ST controls");
+  assert(__testing.terminalBacklogSafeSlice("aaaa\x1b]2;title", 5) === "", "terminal backlog trim should drop unterminated control tails");
   const rendererBrowserTabs = fs.readFileSync(path.join(__dirname, "..", "renderer", "browser-tabs.js"), "utf8");
   const serverApp = fs.readFileSync(path.join(__dirname, "server.cjs"), "utf8");
   assert(
@@ -354,6 +443,47 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
       && serverApp.includes('for (const key of ["terminalBackground", "terminalForeground", "terminalCursorColor"])'),
     "server should persist per-pane terminal color overrides"
   );
+  withTemporaryEnv({
+    TERM_PROGRAM: "WarpTerminal",
+    TERM_PROGRAM_VERSION: "host-version",
+    WARP_IS_LOCAL_SHELL_SESSION: "1",
+    WT_SESSION: "windows-terminal-session",
+    CMUX_SOCKET: "old-macos-socket",
+    CMUX_SOCKET_PASSWORD: "old-secret",
+    CMUX_WINDOWS_TOKEN: "launch-token",
+    ANTHROPIC_API_KEY: "expired-key",
+    ANTHROPIC_MODEL: "stale-model",
+    ANTHROPIC_SMALL_FAST_MODEL: "stale-fast-model",
+    CLAUDE_CODE_USE_BEDROCK: "1",
+    CLAUDE_CODE_USE_VERTEX: "1",
+    ANTHROPIC_AUTH_TOKEN: "third-party-token",
+    ANTHROPIC_BASE_URL: "https://api.example.test"
+  }, () => {
+    const env = __testing.terminalProcessEnv(
+      { id: "panel-test", workspaceId: "workspace-test", runtime: { pipeName: "pipe-test" } },
+      "panel-token",
+      { TERM: "bad-term", COLORTERM: "bad-color" }
+    );
+    assert(env.TERM === "xterm-256color", "terminal children should get cmux's managed TERM");
+    assert(env.COLORTERM === "truecolor", "terminal children should get cmux's managed truecolor identity");
+    assert(env.TERM_PROGRAM === "cmux", "terminal children should not inherit another terminal emulator identity");
+    assert(!Object.hasOwn(env, "WARP_IS_LOCAL_SHELL_SESSION"), "terminal children should not inherit Warp shell integration flags");
+    assert(!Object.hasOwn(env, "WT_SESSION"), "terminal children should not inherit Windows Terminal session markers");
+    assert(!Object.hasOwn(env, "CMUX_SOCKET"), "terminal children should not inherit an ambient cmux socket");
+    assert(!Object.hasOwn(env, "CMUX_SOCKET_PASSWORD"), "terminal children should not inherit ambient cmux credentials");
+    assert(!Object.hasOwn(env, "CMUX_WINDOWS_TOKEN"), "terminal children should not inherit the renderer launch token");
+    assert(env.ANTHROPIC_API_KEY === "", "terminal children should clear inherited Claude API key selection");
+    assert(env.ANTHROPIC_MODEL === "", "terminal children should clear inherited Claude model selection");
+    assert(env.ANTHROPIC_SMALL_FAST_MODEL === "", "terminal children should clear inherited Claude fast-model selection");
+    assert(env.CLAUDE_CODE_USE_BEDROCK === "", "terminal children should clear inherited Claude Bedrock selection");
+    assert(env.CLAUDE_CODE_USE_VERTEX === "", "terminal children should clear inherited Claude Vertex selection");
+    assert(env.ANTHROPIC_AUTH_TOKEN === "third-party-token", "terminal children should preserve unrelated third-party Claude auth token values");
+    assert(env.ANTHROPIC_BASE_URL === "https://api.example.test", "terminal children should preserve unrelated third-party Claude endpoint values");
+    assert(env.CMUX_WINDOWS_PIPE === "pipe-test", "terminal children should receive the current Windows pipe");
+    assert(env.CMUX_WINDOWS_PANEL_TOKEN === "panel-token", "terminal children should receive the current panel token");
+    assert(env.CMUX_WORKSPACE_ID === "workspace-test", "terminal children should receive the current workspace id");
+    assert(env.CMUX_PANEL_ID === "panel-test", "terminal children should receive the current panel id");
+  });
   assert(
     rendererBrowserTabs.includes("titleLocked")
       && rendererApp.includes("if (tab.titleLocked) return;")
@@ -477,6 +607,42 @@ async function waitForCondition(label, probe, timeoutMs = 3000) {
 
   const initialTerminal = workspace.panels[0];
   assert(initialTerminal?.type === "terminal", "workspace should start with a terminal panel");
+  const terminalSocket = new WebSocket(`${info.url.replace(/^http/, "ws")}terminal/${initialTerminal.id}?token=${encodeURIComponent(info.launchToken)}`);
+  await waitForWebSocketOpen(terminalSocket);
+  const terminalProcess = runtime.terminals.get(initialTerminal.id);
+  assert(terminalProcess, "terminal websocket should create a terminal process");
+  const originalPtyProcess = terminalProcess.ptyProcess;
+  let resizeCalls = 0;
+  terminalProcess.ptyProcess = {
+    resize() {
+      resizeCalls += 1;
+    },
+    write() {},
+    kill() {}
+  };
+  try {
+    terminalSocket.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+    await waitForCondition("terminal resize applied", () => resizeCalls === 1 && terminalProcess.cols === 120 && terminalProcess.rows === 40);
+    terminalSocket.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+    await delay(80);
+    assert(resizeCalls === 1, "duplicate terminal resize should not reach the PTY resize path");
+    terminalSocket.send(JSON.stringify({ type: "resize", cols: 121, rows: 40 }));
+    await waitForCondition("changed terminal resize applied", () => resizeCalls === 2 && terminalProcess.cols === 121 && terminalProcess.rows === 40);
+  } finally {
+    terminalProcess.ptyProcess = originalPtyProcess;
+    terminalSocket.close();
+  }
+  terminalProcess.panel.titleLocked = false;
+  terminalProcess.panel.title = "Terminal";
+  terminalProcess.emitOutput("\x1b]0;Split");
+  terminalProcess.emitOutput(" Title\x07");
+  assert(terminalProcess.panel.title === "Split Title", "terminal OSC title should parse across output chunks");
+  terminalProcess.emitOutput("\x1b");
+  terminalProcess.emitOutput("]2;Window Title\x07");
+  assert(terminalProcess.panel.title === "Window Title", "terminal OSC title should parse when the prefix is split across chunks");
+  terminalProcess.emitOutput("\x1b]2;Pwsh.exe\x1b\\");
+  assert(terminalProcess.panel.title === "PowerShell", "terminal OSC title should support ST termination and cleanup");
+
   const titleResponse = await fetch(`${info.url}api/panels/${initialTerminal.id}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
