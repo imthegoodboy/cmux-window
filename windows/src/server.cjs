@@ -196,6 +196,56 @@ const shellProfileIds = new Set(["auto", "pwsh", "powershell", "cmd", "wsl", "gi
 const executableExistsCache = new Map();
 const resolvedShellCache = new Map();
 const gitBranchCache = new Map();
+const managedTerminalEnvironment = {
+  TERM: "xterm-256color",
+  COLORTERM: "truecolor",
+  TERM_PROGRAM: "cmux"
+};
+const inheritedTerminalHostEnvironmentKeys = new Set([
+  "ANSICON",
+  "ANSICON_DEF",
+  "CMUX_SOCKET",
+  "CMUX_SOCKET_PASSWORD",
+  "CMUX_SOCKET_PATH",
+  "CMUX_SURFACE_ID",
+  "CMUX_TAB_ID",
+  "CONEMUANSI",
+  "CONEMUANSILOG",
+  "CONEMUBASEDIR",
+  "CONEMUBUILD",
+  "CONEMUCONFIG",
+  "CONEMUDIR",
+  "CONEMUDRAWHWND",
+  "CONEMUDRIVE",
+  "CONEMUHOOKS",
+  "CONEMUHWND",
+  "CONEMUPALETTE",
+  "CONEMUPID",
+  "CONEMUSERVERPID",
+  "CONEMUTASK",
+  "CONEMUWORKDIR",
+  "LC_TERMINAL",
+  "LC_TERMINAL_VERSION",
+  "TERM_PROGRAM",
+  "TERM_PROGRAM_VERSION",
+  "TERM_SESSION_ID",
+  "WT_PROFILE_ID",
+  "WT_SESSION"
+]);
+const inheritedTerminalHostEnvironmentPrefixes = [
+  "ALACRITTY_",
+  "GHOSTTY_",
+  "KITTY_",
+  "WARP_",
+  "WEZTERM_"
+];
+const inheritedClaudeAuthSelectionEnvironmentKeys = new Set([
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_SMALL_FAST_MODEL",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX"
+]);
 
 function sanitizeShellProfile(value) {
   const profile = String(value || "auto").trim();
@@ -499,6 +549,29 @@ function shellArgs(shellPath) {
   return [];
 }
 
+function terminalEnvironmentWithoutInheritedHost(baseEnv = process.env) {
+  const next = { ...baseEnv };
+  for (const key of Object.keys(next)) {
+    const upperKey = key.toUpperCase();
+    if (
+      inheritedTerminalHostEnvironmentKeys.has(upperKey)
+      || inheritedTerminalHostEnvironmentPrefixes.some((prefix) => upperKey.startsWith(prefix))
+    ) {
+      delete next[key];
+    }
+  }
+  return next;
+}
+
+function clearInheritedClaudeAuthSelectionEnvironment(env) {
+  for (const key of Object.keys(env)) {
+    if (inheritedClaudeAuthSelectionEnvironmentKeys.has(key.toUpperCase())) {
+      env[key] = "";
+    }
+  }
+  return env;
+}
+
 function tokensMatch(expected, actual) {
   const left = Buffer.from(String(expected || ""));
   const right = Buffer.from(String(actual || ""));
@@ -558,12 +631,15 @@ function writePipeSocketLine(socket, line) {
 }
 
 function terminalProcessEnv(panel, panelToken, extra = {}) {
-  const env = { ...process.env };
+  const env = clearInheritedClaudeAuthSelectionEnvironment(
+    terminalEnvironmentWithoutInheritedHost(process.env)
+  );
   delete env.CMUX_WINDOWS_TOKEN;
   delete env.CMUX_WINDOWS_PANEL_TOKEN;
   return {
     ...env,
     ...extra,
+    ...managedTerminalEnvironment,
     CMUX_WINDOWS: "1",
     CMUX_WINDOWS_PIPE: panel.runtime?.pipeName || defaultPipeName,
     CMUX_WINDOWS_PANEL_TOKEN: panelToken,
@@ -595,6 +671,101 @@ function terminalOutputNeedsAttention(data) {
   return Boolean(text && terminalAttentionPatterns.some((pattern) => pattern.test(text)));
 }
 
+const terminalOscCarryLimit = 4096;
+const terminalBacklogLimit = 200000;
+const terminalBacklogEscapeScanLimit = 4096;
+const terminalTitleOscPattern = /\x1b\](?:0|2);/g;
+const terminalTitleOscPrefixes = ["\x1b]0;", "\x1b]2;"];
+
+function terminalTitleOscPartialPrefixTail(input) {
+  const value = String(input || "");
+  const maxLength = Math.max(...terminalTitleOscPrefixes.map((prefix) => prefix.length)) - 1;
+  for (let length = Math.min(maxLength, value.length); length > 0; length -= 1) {
+    const tail = value.slice(-length);
+    if (terminalTitleOscPrefixes.some((prefix) => prefix.startsWith(tail))) return tail;
+  }
+  return "";
+}
+
+function extractTerminalTitleSequences(data, carry = "") {
+  const input = `${carry || ""}${data || ""}`;
+  const titles = [];
+  let nextCarry = "";
+  let index = 0;
+  while (index < input.length) {
+    terminalTitleOscPattern.lastIndex = index;
+    const match = terminalTitleOscPattern.exec(input);
+    if (!match) break;
+    const start = match.index;
+    const searchStart = terminalTitleOscPattern.lastIndex;
+    const belEnd = input.indexOf("\x07", searchStart);
+    const stEnd = input.indexOf("\x1b\\", searchStart);
+    let end = -1;
+    let terminatorLength = 0;
+    if (belEnd >= 0 && (stEnd < 0 || belEnd < stEnd)) {
+      end = belEnd;
+      terminatorLength = 1;
+    } else if (stEnd >= 0) {
+      end = stEnd;
+      terminatorLength = 2;
+    }
+    if (end < 0) {
+      nextCarry = input.slice(start);
+      break;
+    }
+    titles.push(input.slice(searchStart, end));
+    index = end + terminatorLength;
+  }
+  if (!nextCarry) nextCarry = terminalTitleOscPartialPrefixTail(input);
+  if (nextCarry.length > terminalOscCarryLimit) nextCarry = "";
+  return { titles, carry: nextCarry };
+}
+
+function terminalStringTerminatorEnd(input, startIndex) {
+  const belEnd = input.indexOf("\x07", startIndex);
+  const stEnd = input.indexOf("\x1b\\", startIndex);
+  if (belEnd < 0 && stEnd < 0) return -1;
+  if (belEnd >= 0 && (stEnd < 0 || belEnd < stEnd)) return belEnd + 1;
+  return stEnd + 2;
+}
+
+function terminalEscapeSequenceEnd(input, escIndex) {
+  const introducer = input[escIndex + 1];
+  if (!introducer) return -1;
+  if (introducer === "[") {
+    for (let index = escIndex + 2; index < input.length; index += 1) {
+      const code = input.charCodeAt(index);
+      if (code >= 0x40 && code <= 0x7e) return index + 1;
+    }
+    return -1;
+  }
+  if (introducer === "]") return terminalStringTerminatorEnd(input, escIndex + 2);
+  if (introducer === "P" || introducer === "X" || introducer === "^" || introducer === "_") {
+    const stEnd = input.indexOf("\x1b\\", escIndex + 2);
+    return stEnd < 0 ? -1 : stEnd + 2;
+  }
+  return escIndex + 2 <= input.length ? escIndex + 2 : -1;
+}
+
+function terminalBacklogSafeSlice(input, limit = terminalBacklogLimit) {
+  const value = String(input || "");
+  if (value.length <= limit) return value;
+  const cutIndex = value.length - limit;
+  let startIndex = cutIndex;
+  const scanStart = Math.max(0, cutIndex - terminalBacklogEscapeScanLimit);
+  const lastEscapeBeforeCut = value.lastIndexOf("\x1b", cutIndex);
+  if (lastEscapeBeforeCut >= scanStart) {
+    const sequenceEnd = terminalEscapeSequenceEnd(value, lastEscapeBeforeCut);
+    if (sequenceEnd < 0 || sequenceEnd > cutIndex) {
+      startIndex = sequenceEnd < 0 ? value.length : sequenceEnd;
+    }
+  }
+  const sliced = value.slice(startIndex);
+  return sliced.charCodeAt(0) >= 0xdc00 && sliced.charCodeAt(0) <= 0xdfff
+    ? sliced.slice(1)
+    : sliced;
+}
+
 class TerminalProcess {
   constructor(panel, options = {}) {
     this.panel = panel;
@@ -605,6 +776,7 @@ class TerminalProcess {
     this.closed = false;
     this.ptyProcess = null;
     this.child = null;
+    this.oscCarry = "";
     this.panelToken = crypto.randomBytes(32).toString("hex");
     this.start();
   }
@@ -671,13 +843,16 @@ class TerminalProcess {
   }
 
   emitOutput(data) {
-    this.backlog = (this.backlog + data).slice(-200000);
-    const titleMatch = data.match(/\x1b\]0;([^\x07\x1b]+)\x07/);
-    if (titleMatch?.[1] && !this.panel.titleLocked) {
-      const nextTitle = cleanTerminalTitle(titleMatch[1]);
-      if (nextTitle && this.panel.title !== nextTitle) {
-        this.panel.title = nextTitle;
-        this.panel.runtime.scheduleTerminalMetadataBroadcast();
+    this.backlog = terminalBacklogSafeSlice(this.backlog + data);
+    const titleState = extractTerminalTitleSequences(data, this.oscCarry);
+    this.oscCarry = titleState.carry;
+    if (!this.panel.titleLocked) {
+      for (const rawTitle of titleState.titles) {
+        const nextTitle = cleanTerminalTitle(rawTitle);
+        if (nextTitle && this.panel.title !== nextTitle) {
+          this.panel.title = nextTitle;
+          this.panel.runtime.scheduleTerminalMetadataBroadcast();
+        }
       }
     }
     if (terminalOutputNeedsAttention(data)) {
@@ -707,6 +882,7 @@ class TerminalProcess {
   resize(cols, rows) {
     const nextCols = Math.max(2, Math.floor(Number(cols) || this.cols));
     const nextRows = Math.max(2, Math.floor(Number(rows) || this.rows));
+    if (nextCols === this.cols && nextRows === this.rows) return;
     this.cols = nextCols;
     this.rows = nextRows;
     if (this.ptyProcess) this.ptyProcess.resize(nextCols, nextRows);
@@ -1511,7 +1687,7 @@ class CmuxWindowsRuntime {
     const ext = path.extname(filePath).toLowerCase();
     if (ext === ".html") return "text/html; charset=utf-8";
     if (ext === ".css") return "text/css; charset=utf-8";
-    if (ext === ".js") return "text/javascript; charset=utf-8";
+    if (ext === ".js" || ext === ".mjs") return "text/javascript; charset=utf-8";
     if (ext === ".json") return "application/json; charset=utf-8";
     if (ext === ".svg") return "image/svg+xml; charset=utf-8";
     return "application/octet-stream";
@@ -1819,4 +1995,14 @@ function createCmuxWindowsRuntime(options) {
   return new CmuxWindowsRuntime(options);
 }
 
-module.exports = { createCmuxWindowsRuntime, defaultPipeName };
+module.exports = {
+  createCmuxWindowsRuntime,
+  defaultPipeName,
+  __testing: {
+    managedTerminalEnvironment,
+    clearInheritedClaudeAuthSelectionEnvironment,
+    terminalBacklogSafeSlice,
+    terminalEnvironmentWithoutInheritedHost,
+    terminalProcessEnv
+  }
+};
