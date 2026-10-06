@@ -159,6 +159,11 @@ import {
   settingsSearchMatchesNormalized,
   settingsSearchTokensNormalized
 } from "./settings-search.js";
+import {
+  stabilizeTerminalCursorOutput,
+  terminalCursorChoreographyActive,
+  terminalPromptCursorColumn
+} from "./terminal-output.mjs";
 
 const backgroundPresetMap = new Map(backgroundPresets.map((preset) => [preset.value, preset]));
 const terminalFontStacks = new Map(terminalFontOptions.map(([id, , stack]) => [id, stack]));
@@ -298,6 +303,9 @@ const terminalHiddenOutputPreserveBytes = terminalOutputBacklogThreshold;
 const terminalResumeOutputChunkSize = 8192;
 const terminalResumeThrottleThreshold = terminalOutputBacklogThreshold / 2;
 const terminalResumeThrottleFrames = 4;
+const terminalFitPixelTolerance = 2;
+const terminalResizeSettleDelayMs = 120;
+const terminalStableCursorHoldMs = 2500;
 const embeddedBackgroundDataUrlLimitBytes = 2 * 1024 * 1024;
 const renderSlowFrameMs = 24;
 const renderVerySlowFrameMs = 72;
@@ -742,6 +750,9 @@ const browserReadableLayoutActivePercent = 68;
 const crowdedPaneAutoLayoutPanelThreshold = 3;
 const visibleBackgroundOpacity = 24;
 const terminalCursorMigrationStorageKey = "cmux.terminalCursorBarMigration";
+const terminalSteadyCursorMigrationStorageKey = "cmux.terminalSteadyCursorMigration";
+const terminalLiveWorkspaceSwitchMigrationStorageKey = "cmux.terminalLiveWorkspaceSwitchMigration";
+const browserLiveWorkspaceSwitchMigrationStorageKey = "cmux.browserLiveWorkspaceSwitchMigration";
 const browserHomeMigrationStorageKey = "cmux.browserHomeGoogleMigration";
 const browserReadableChromeMigrationStorageKey = "cmux.browserReadableChromeMigration";
 const browserCompactChromeMigrationStorageKey = "cmux.browserCompactChromeMigration";
@@ -1379,6 +1390,7 @@ const elements = {
   commandStrip: document.querySelector(".command-strip"),
   surfaceTabs: document.getElementById("surfaceTabs"),
   paneGrid: document.getElementById("paneGrid"),
+  paneKeepAlive: document.getElementById("paneKeepAlive"),
   paneCreationButtons: [
     document.getElementById("splitRightButton"),
     document.getElementById("splitDownButton")
@@ -1647,7 +1659,7 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   next.browserHomeUrl = normalizeUrl(next.browserHomeUrl || defaultSettings.browserHomeUrl, defaultSettings.browserHomeUrl);
   if (!browserLaunchModeOptions.some(([id]) => id === next.browserLaunchMode)) next.browserLaunchMode = defaultSettings.browserLaunchMode;
   next.externalBrowserProfileId = String(next.externalBrowserProfileId || defaultSettings.externalBrowserProfileId).trim().slice(0, 120) || "system";
-  next.browserSuspendInactive = next.browserSuspendInactive !== false;
+  next.browserSuspendInactive = next.browserSuspendInactive === true;
   if (!browserChromeOptions.some(([id]) => id === next.browserChromeMode)) next.browserChromeMode = defaultSettings.browserChromeMode;
   next.browserZoom = String(next.browserZoom || defaultSettings.browserZoom);
   if (!browserZoomOptions.some(([id]) => id === next.browserZoom)) next.browserZoom = defaultSettings.browserZoom;
@@ -1662,9 +1674,9 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   next.adaptivePerformance = next.adaptivePerformance !== false;
   next.reduceMotion = Boolean(next.reduceMotion);
   if (!chromeMotionOptions.some(([id]) => id === next.chromeMotionMode)) next.chromeMotionMode = defaultSettings.chromeMotionMode;
-  next.terminalPauseInactiveOutput = next.terminalPauseInactiveOutput !== false;
-  next.terminalSmoothResumedOutput = next.terminalSmoothResumedOutput !== false;
-  next.terminalCursorBlink = next.terminalCursorBlink !== false;
+  next.terminalPauseInactiveOutput = next.terminalPauseInactiveOutput === true;
+  next.terminalSmoothResumedOutput = next.terminalSmoothResumedOutput === true;
+  next.terminalCursorBlink = false;
   next.terminalBackground = normalizeTerminalColor(next.terminalBackground);
   next.terminalForeground = normalizeTerminalColor(next.terminalForeground);
   next.terminalCursorColor = normalizeTerminalColor(next.terminalCursorColor);
@@ -1808,6 +1820,40 @@ function loadSettings() {
   ) {
     parsed.terminalCursorStyle = defaultSettings.terminalCursorStyle;
     localStorage.setItem(terminalCursorMigrationStorageKey, "1");
+    migrated = true;
+  }
+  if (
+    localStorage.getItem(terminalSteadyCursorMigrationStorageKey) !== "1"
+    && parsed
+    && typeof parsed === "object"
+    && !Array.isArray(parsed)
+    && parsed.terminalCursorBlink !== false
+  ) {
+    parsed.terminalCursorBlink = false;
+    localStorage.setItem(terminalSteadyCursorMigrationStorageKey, "1");
+    migrated = true;
+  }
+  if (
+    localStorage.getItem(terminalLiveWorkspaceSwitchMigrationStorageKey) !== "1"
+    && parsed
+    && typeof parsed === "object"
+    && !Array.isArray(parsed)
+    && (parsed.terminalPauseInactiveOutput !== false || parsed.terminalSmoothResumedOutput !== false)
+  ) {
+    parsed.terminalPauseInactiveOutput = false;
+    parsed.terminalSmoothResumedOutput = false;
+    localStorage.setItem(terminalLiveWorkspaceSwitchMigrationStorageKey, "1");
+    migrated = true;
+  }
+  if (
+    localStorage.getItem(browserLiveWorkspaceSwitchMigrationStorageKey) !== "1"
+    && parsed
+    && typeof parsed === "object"
+    && !Array.isArray(parsed)
+    && parsed.browserSuspendInactive !== false
+  ) {
+    parsed.browserSuspendInactive = false;
+    localStorage.setItem(browserLiveWorkspaceSwitchMigrationStorageKey, "1");
     migrated = true;
   }
   if (
@@ -8226,11 +8272,10 @@ function persistPaneLayoutFromGrid(direction) {
 function terminalTheme(panel = null) {
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim() || "#72a4ff";
   const overrides = terminalPanelColorOverrides(panel);
-  const hasPaneBackground = Boolean(panel?.type === "terminal" && normalizeBackgroundValue(panel.backgroundImage));
   const backgroundColor = overrides.terminalBackground || state.settings.terminalBackground || terminalColorDefaults.background;
   const foreground = overrides.terminalForeground || state.settings.terminalForeground || terminalColorDefaults.foreground;
   const cursor = overrides.terminalCursorColor || state.settings.terminalCursorColor || accent;
-  const background = hasPaneBackground ? "rgba(0, 0, 0, 0)" : backgroundColor;
+  const background = backgroundColor;
   const paletteBackground = backgroundColor;
   return {
     background,
@@ -8278,6 +8323,7 @@ function applyTerminalThemeIfChanged(session, panel = null, options = {}) {
   const signature = terminalThemeSignature(panel);
   if (!options.force && session.terminalThemeSignature === signature) return false;
   session.term.options.theme = terminalTheme(panel);
+  updateTerminalStableCursorTheme(session, panel);
   session.term.refresh?.(0, Math.max(0, (session.term.rows || 1) - 1));
   session.terminalThemeSignature = signature;
   return true;
@@ -8307,8 +8353,9 @@ function refreshTerminalAppearance() {
     session.term.options.lineHeight = state.settings.terminalLineHeight;
     session.term.options.scrollback = state.settings.terminalScrollback;
     session.term.options.cursorStyle = state.settings.terminalCursorStyle;
-    session.term.options.cursorBlink = state.settings.terminalCursorBlink;
+    session.term.options.cursorBlink = false;
     applyTerminalThemeIfChanged(session, panel);
+    scheduleTerminalStableCursorUpdate(session);
     scheduleFitTerminal(session, true);
   }
 }
@@ -12502,9 +12549,43 @@ function showNewSurfaceTabMenu(event, workspace = activeWorkspace(), preferredKi
   }
 }
 
+function ensurePaneKeepAliveHost() {
+  if (elements.paneKeepAlive?.isConnected) return elements.paneKeepAlive;
+  const host = elements.paneKeepAlive || document.createElement("div");
+  host.id = "paneKeepAlive";
+  host.className = "pane-keepalive";
+  host.setAttribute("aria-hidden", "true");
+  elements.paneKeepAlive = host;
+  elements.paneGrid?.after?.(host);
+  return host;
+}
+
+function blurPaneFocusBeforeDetach(pane) {
+  const active = document.activeElement;
+  if (!pane || !active || active === document.body || !pane.contains(active)) return;
+  active.blur?.();
+}
+
+function parkInactivePaneNodes(activePanelIds = new Set(), livePanelIds = null) {
+  const host = ensurePaneKeepAliveHost();
+  if (!host || !elements.paneGrid) return;
+  for (const child of [...elements.paneGrid.querySelectorAll(".pane[data-panel-id]")]) {
+    const panelId = child.dataset.panelId || "";
+    if (activePanelIds.has(panelId)) continue;
+    blurPaneFocusBeforeDetach(child);
+    if (livePanelIds && !livePanelIds.has(panelId)) {
+      cleanupPanel(panelId);
+      child.remove();
+      continue;
+    }
+    host.appendChild(child);
+  }
+}
+
 function renderPanes(workspace) {
   const panels = workspace?.panels || [];
   if (!workspace) {
+    parkInactivePaneNodes(new Set());
     state.paneRenderSignature = "";
     state.paneStructureSignature = "";
     state.paneFitSignature = "";
@@ -12555,13 +12636,17 @@ function renderPanes(workspace) {
   toggleClassIfChanged(elements.paneGrid, "is-zoomed", Boolean(zoomedPanel));
   const panelIds = new Set(visiblePanels.map((panel) => panel.id));
   const livePanelIds = allPanelIds();
+  parkInactivePaneNodes(panelIds, livePanelIds);
   for (const child of [...elements.paneGrid.children]) {
     if (child.classList.contains("pane") && !panelIds.has(child.dataset.panelId)) {
+      blurPaneFocusBeforeDetach(child);
       if (!livePanelIds.has(child.dataset.panelId)) cleanupPanel(child.dataset.panelId);
-      child.remove();
+      if (livePanelIds.has(child.dataset.panelId)) ensurePaneKeepAliveHost()?.appendChild(child);
+      else child.remove();
     }
   }
   if (panels.length === 0) {
+    parkInactivePaneNodes(new Set());
     state.paneRenderSignature = "";
     state.paneStructureSignature = "";
     state.paneFitSignature = "";
@@ -13795,19 +13880,19 @@ function createPane(panel) {
   };
   parts.zoom.onclick = (event) => {
     event.stopPropagation();
-    togglePaneZoom(pane.dataset.panelId);
+    togglePaneZoom(pane.dataset.panelId, { focus: false });
   };
   parts.minimize.onclick = (event) => {
     event.stopPropagation();
-    togglePaneMinimized(pane.dataset.panelId);
+    togglePaneMinimized(pane.dataset.panelId, { focus: false });
   };
   parts.fontDown.onclick = (event) => {
     event.stopPropagation();
-    changePaneTerminalFontSize(pane.dataset.panelId, -1, { toast: false, status: true });
+    changePaneTerminalFontSize(pane.dataset.panelId, -1, { focus: false, toast: false, status: false });
   };
   parts.fontUp.onclick = (event) => {
     event.stopPropagation();
-    changePaneTerminalFontSize(pane.dataset.panelId, 1, { toast: false, status: true });
+    changePaneTerminalFontSize(pane.dataset.panelId, 1, { focus: false, toast: false, status: false });
   };
   parts.restart.onclick = (event) => {
     event.stopPropagation();
@@ -14069,11 +14154,17 @@ function cleanupPanel(panelId) {
     terminal.disposed = true;
     if (terminal.fitFrame) cancelAnimationFrame(terminal.fitFrame);
     if (terminal.connectionStatusTimer) clearTimeout(terminal.connectionStatusTimer);
+    if (terminal.resizeSendTimer) clearTimeout(terminal.resizeSendTimer);
+    if (terminal.stableCursorFrame) cancelAnimationFrame(terminal.stableCursorFrame);
+    if (terminal.stableCursorExpiryTimer) clearTimeout(terminal.stableCursorExpiryTimer);
     if (terminal.queue) recordTerminalOutputQueueChange(-terminal.queue.length);
     closeSocketQuietly(terminal.socket);
     terminal.resizeObserver?.disconnect();
     terminal.searchResultDisposable?.dispose?.();
     terminal.focusDisposable?.dispose?.();
+    terminal.stableCursorRenderDisposable?.dispose?.();
+    terminal.stableCursorMoveDisposable?.dispose?.();
+    terminal.stableCursorWriteDisposable?.dispose?.();
     terminal.term?.dispose();
     state.terminals.delete(panelId);
   }
@@ -14347,10 +14438,12 @@ function ensureTerminal(panel, body) {
   const theme = terminalTheme(panel);
   const themeSignature = terminalThemeSignature(panel);
   const term = new TerminalConstructor({
-    cursorBlink: state.settings.terminalCursorBlink,
+    cursorBlink: false,
+    cursorInactiveStyle: "outline",
     cursorStyle: state.settings.terminalCursorStyle,
+    allowTransparency: false,
     allowProposedApi: true,
-    convertEol: true,
+    convertEol: false,
     fontFamily: terminalFontStack(),
     fontSize,
     lineHeight: state.settings.terminalLineHeight,
@@ -14386,6 +14479,24 @@ function ensureTerminal(panel, body) {
     lastFitRows: 0,
     lastHostWidth: 0,
     lastHostHeight: 0,
+    pendingFitWidth: 0,
+    pendingFitHeight: 0,
+    pendingResizeCols: 0,
+    pendingResizeRows: 0,
+    lastSentResizeCols: 0,
+    lastSentResizeRows: 0,
+    resizeSendTimer: 0,
+    stableCursorOverlay: null,
+    stableCursorFrame: 0,
+    stableCursorExpiryTimer: 0,
+    stableCursorRow: -1,
+    stableCursorCol: -1,
+    stableCursorPromptRow: -1,
+    stableCursorPromptCol: -1,
+    stableCursorHoldUntil: 0,
+    stableCursorRenderDisposable: null,
+    stableCursorMoveDisposable: null,
+    stableCursorWriteDisposable: null,
     forceFit: false,
     fitDeferred: false,
     resumeThrottleFrames: 0,
@@ -14398,8 +14509,13 @@ function ensureTerminal(panel, body) {
     connectionStatusTimer: 0,
     createdAt: performance.now(),
     hasOutput: false,
+    cursorControlTail: "",
+    cursorChoreographyEvents: [],
+    cursorChoreographyHoldUntil: 0,
     terminalThemeSignature: themeSignature
   };
+  session.stableCursorOverlay = createTerminalStableCursorOverlay(panel, session);
+  host.append(session.stableCursorOverlay);
   session.searchOverlay = createTerminalSearchOverlay(panel, session);
   if (session.searchOverlay) host.append(session.searchOverlay);
   session.searchResultDisposable = searchAddon?.onDidChangeResults?.((result) => {
@@ -14417,6 +14533,9 @@ function ensureTerminal(panel, body) {
       queueFocusSync({ type: "panel", panelId: panel.id });
     }
   });
+  session.stableCursorRenderDisposable = term.onRender?.(() => scheduleTerminalStableCursorUpdate(session));
+  session.stableCursorMoveDisposable = term.onCursorMove?.(() => scheduleTerminalStableCursorUpdate(session));
+  session.stableCursorWriteDisposable = term.onWriteParsed?.(() => scheduleTerminalStableCursorUpdate(session));
 
   socket.addEventListener("open", () => {
     recordTerminalConnectDuration(performance.now() - session.createdAt);
@@ -14434,7 +14553,11 @@ function ensureTerminal(panel, body) {
     const message = JSON.parse(event.data);
     if (message.type === "output") {
       markTerminalOutputReady(session);
-      enqueueTerminalOutput(session, message.data);
+      const output = stabilizeTerminalCursorOutput(message.data, session);
+      if (terminalCursorChoreographyActive(session)) {
+        scheduleTerminalStableCursorExpiry(session);
+      }
+      if (output) enqueueTerminalOutput(session, output);
     }
   });
 
@@ -14450,6 +14573,156 @@ function ensureTerminal(panel, body) {
   state.terminals.set(panel.id, session);
 }
 
+function createTerminalStableCursorOverlay(panel, session) {
+  const overlay = document.createElement("div");
+  overlay.className = "terminal-stable-cursor";
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.hidden = true;
+  updateTerminalStableCursorTheme(session, panel, overlay);
+  return overlay;
+}
+
+function updateTerminalStableCursorTheme(session, panel, overlay = session?.stableCursorOverlay) {
+  if (!overlay) return;
+  const theme = terminalTheme(panel);
+  overlay.style.setProperty("--terminal-stable-cursor-color", theme.cursor || terminalColorDefaults.cursor);
+}
+
+function terminalPromptCursorTarget(session) {
+  const term = session?.term;
+  const buffer = term?.buffer?.active;
+  if (!term || !buffer || !term.rows || !term.cols) return null;
+  const viewportY = buffer.viewportY || 0;
+  let target = null;
+  for (let row = 0; row < term.rows; row += 1) {
+    const line = buffer.getLine(viewportY + row);
+    const text = line?.translateToString(true) || "";
+    const col = terminalPromptCursorColumn(text);
+    if (col >= 0) target = { row, col: Math.min(col, Math.max(0, term.cols - 1)) };
+  }
+  return target;
+}
+
+function terminalBufferHasVisibleText(session) {
+  const term = session?.term;
+  const buffer = term?.buffer?.active;
+  if (!term || !buffer || !term.rows) return false;
+  const viewportY = buffer.viewportY || 0;
+  for (let row = 0; row < term.rows; row += 1) {
+    const text = buffer.getLine(viewportY + row)?.translateToString(true) || "";
+    if (text.trim()) return true;
+  }
+  return false;
+}
+
+function scheduleTerminalStableCursorUpdate(session) {
+  if (!session || session.disposed || session.stableCursorFrame) return;
+  session.stableCursorFrame = requestAnimationFrame(() => {
+    session.stableCursorFrame = 0;
+    updateTerminalStableCursor(session);
+  });
+}
+
+function scheduleTerminalStableCursorExpiry(session) {
+  if (!session || session.disposed) return;
+  const holdUntil = Number(session.cursorChoreographyHoldUntil || 0);
+  const now = performance.now();
+  if (!Number.isFinite(holdUntil) || holdUntil <= now) return;
+  if (session.stableCursorExpiryTimer) clearTimeout(session.stableCursorExpiryTimer);
+  session.stableCursorExpiryTimer = window.setTimeout(() => {
+    session.stableCursorExpiryTimer = 0;
+    updateTerminalStableCursor(session);
+  }, Math.max(0, holdUntil - now + 32));
+}
+
+function hideTerminalStableCursor(session) {
+  if (session?.stableCursorExpiryTimer) {
+    clearTimeout(session.stableCursorExpiryTimer);
+    session.stableCursorExpiryTimer = 0;
+  }
+  session?.host?.classList.remove("has-stable-terminal-cursor");
+  if (session?.stableCursorOverlay) session.stableCursorOverlay.hidden = true;
+}
+
+function updateTerminalStableCursor(session) {
+  if (!session || session.disposed || !session.stableCursorOverlay) return;
+  const target = terminalPromptCursorTarget(session);
+  const active = terminalCursorChoreographyActive(session);
+  const term = session.term;
+  const buffer = term?.buffer?.active;
+  const now = performance.now();
+  if (target) {
+    session.stableCursorPromptRow = target.row;
+    session.stableCursorPromptCol = target.col;
+    session.stableCursorRow = target.row;
+    session.stableCursorCol = target.col;
+    session.stableCursorHoldUntil = now + terminalStableCursorHoldMs;
+  }
+  if (!active) {
+    hideTerminalStableCursor(session);
+    return;
+  }
+  scheduleTerminalStableCursorExpiry(session);
+  if (!target || !term || !buffer) {
+    if (terminalBufferHasVisibleText(session)) {
+      session.stableCursorRow = -1;
+      session.stableCursorCol = -1;
+      hideTerminalStableCursor(session);
+      return;
+    }
+    if (session.stableCursorRow >= 0 && session.stableCursorCol >= 0) {
+      session.stableCursorHoldUntil = now + terminalStableCursorHoldMs;
+      renderTerminalStableCursor(session);
+      return;
+    }
+    session.stableCursorRow = -1;
+    session.stableCursorCol = -1;
+    hideTerminalStableCursor(session);
+    return;
+  }
+  renderTerminalStableCursor(session);
+}
+
+function renderTerminalStableCursor(session) {
+  const overlay = session?.stableCursorOverlay;
+  const term = session?.term;
+  if (session && (session.stableCursorRow < 0 || session.stableCursorCol < 0)) {
+    session.stableCursorRow = session.stableCursorPromptRow;
+    session.stableCursorCol = session.stableCursorPromptCol;
+  }
+  if (!overlay || !term || session.stableCursorRow < 0 || session.stableCursorCol < 0) {
+    hideTerminalStableCursor(session);
+    return;
+  }
+  const rows = session.host?.querySelector(".xterm-rows");
+  const row = rows?.children?.[session.stableCursorRow];
+  if (!row) {
+    hideTerminalStableCursor(session);
+    return;
+  }
+  const hostRect = session.host.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const cellWidth = rowRect.width / Math.max(1, term.cols || 1);
+  const rowHeight = rowRect.height || (session.fontSize * state.settings.terminalLineHeight);
+  if (!Number.isFinite(cellWidth) || cellWidth <= 0 || !Number.isFinite(rowHeight) || rowHeight <= 0) {
+    hideTerminalStableCursor(session);
+    return;
+  }
+  const style = state.settings.terminalCursorStyle || defaultSettings.terminalCursorStyle;
+  const isUnderline = style === "underline";
+  const isBar = style === "bar";
+  const width = isBar ? 2 : Math.max(2, cellWidth);
+  const height = isUnderline ? 2 : rowHeight;
+  const left = rowRect.left - hostRect.left + (session.stableCursorCol * cellWidth);
+  const top = rowRect.top - hostRect.top + (isUnderline ? Math.max(0, rowHeight - height) : 0);
+  overlay.className = `terminal-stable-cursor is-${style}`;
+  overlay.style.width = `${width}px`;
+  overlay.style.height = `${height}px`;
+  overlay.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+  overlay.hidden = false;
+  session.host.classList.add("has-stable-terminal-cursor");
+}
+
 function requestInitialTerminalLayout(session, panelId, frame = 0) {
   requestAnimationFrame(() => {
     if (session.disposed) return;
@@ -14459,7 +14732,7 @@ function requestInitialTerminalLayout(session, panelId, frame = 0) {
       return;
     }
     scheduleFitTerminal(session, true);
-    if (panelId === activeWorkspace()?.activePanelId) session.term.focus();
+    if (panelId === activeWorkspace()?.activePanelId) focusTerminalSession(panelId);
   });
 }
 
@@ -14673,6 +14946,7 @@ function flushTerminalOutput(session) {
     if (session.resumeThrottleFrames > 0) session.resumeThrottleFrames -= 1;
     if (session.disposed) return;
     clearTerminalConnectionStatus(session);
+    if (terminalCursorChoreographyActive(session)) updateTerminalStableCursor(session);
     if (session.queue) scheduleTerminalOutputFlush(session);
   });
 }
@@ -14753,6 +15027,10 @@ function scheduleFitTerminal(session, force = false) {
     session.fitDeferred = true;
     return;
   }
+  const size = terminalHostFitSize(session);
+  if (!force && !session.forceFit && !terminalFitSizeChanged(session, size)) return;
+  session.pendingFitWidth = size.width;
+  session.pendingFitHeight = size.height;
   session.fitDeferred = false;
   if (session.fitFrame) return;
   session.fitFrame = requestAnimationFrame(() => {
@@ -14769,14 +15047,12 @@ function fitTerminal(session) {
     return;
   }
   session.fitDeferred = false;
-  const width = session.host.clientWidth;
-  const height = session.host.clientHeight;
+  const { width, height } = terminalHostFitSize(session);
   if (
     !session.forceFit
     && session.lastFitCols
     && session.lastFitRows
-    && session.lastHostWidth === width
-    && session.lastHostHeight === height
+    && !terminalFitSizeChanged(session, { width, height })
   ) {
     return;
   }
@@ -14791,15 +15067,59 @@ function fitTerminal(session) {
     ) {
       session.lastFitCols = session.term.cols;
       session.lastFitRows = session.term.rows;
-      session.socket.send(JSON.stringify({
-        type: "resize",
-        cols: session.term.cols,
-        rows: session.term.rows
-      }));
+      scheduleTerminalResizeSend(session, session.term.cols, session.term.rows);
     }
   } catch {
     // xterm can reject fit during first layout; later resize observer calls repair it.
   }
+}
+
+function scheduleTerminalResizeSend(session, cols, rows) {
+  const nextCols = Math.max(2, Math.floor(Number(cols) || 0));
+  const nextRows = Math.max(2, Math.floor(Number(rows) || 0));
+  if (!session || session.disposed || !nextCols || !nextRows) return;
+  if (session.lastSentResizeCols === nextCols && session.lastSentResizeRows === nextRows) return;
+  session.pendingResizeCols = nextCols;
+  session.pendingResizeRows = nextRows;
+  if (!session.lastSentResizeCols || !session.lastSentResizeRows) {
+    flushTerminalResizeSend(session);
+    return;
+  }
+  if (session.resizeSendTimer) clearTimeout(session.resizeSendTimer);
+  session.resizeSendTimer = setTimeout(() => {
+    session.resizeSendTimer = 0;
+    flushTerminalResizeSend(session);
+  }, terminalResizeSettleDelayMs);
+}
+
+function flushTerminalResizeSend(session) {
+  if (!session || session.disposed || session.socket.readyState !== WebSocket.OPEN) return;
+  const cols = session.pendingResizeCols;
+  const rows = session.pendingResizeRows;
+  if (!cols || !rows) return;
+  if (session.lastSentResizeCols === cols && session.lastSentResizeRows === rows) return;
+  session.lastSentResizeCols = cols;
+  session.lastSentResizeRows = rows;
+  session.socket.send(JSON.stringify({
+    type: "resize",
+    cols,
+    rows
+  }));
+}
+
+function terminalHostFitSize(session) {
+  const host = session?.host;
+  if (!host) return { width: 0, height: 0 };
+  return {
+    width: Math.round(host.clientWidth || 0),
+    height: Math.round(host.clientHeight || 0)
+  };
+}
+
+function terminalFitSizeChanged(session, size) {
+  if (!session?.lastHostWidth || !session?.lastHostHeight) return true;
+  return Math.abs((size?.width || 0) - session.lastHostWidth) > terminalFitPixelTolerance
+    || Math.abs((size?.height || 0) - session.lastHostHeight) > terminalFitPixelTolerance;
 }
 
 function terminalFitCanRun(session) {
@@ -14826,9 +15146,25 @@ function flushDeferredTerminalFits() {
 
 function isTerminalHostVisible(session) {
   const host = session.host;
+  if (!host?.isConnected || host.closest(".pane-keepalive")) return false;
+  const pane = host.closest(".pane");
+  const body = host.closest(".pane-body");
+  const hostStyle = getComputedStyle(host);
+  const bodyStyle = body ? getComputedStyle(body) : null;
+  const paneStyle = pane ? getComputedStyle(pane) : null;
+  if (
+    pane?.classList.contains("is-minimized")
+    || hostStyle.display === "none"
+    || hostStyle.visibility === "hidden"
+    || bodyStyle?.display === "none"
+    || bodyStyle?.visibility === "hidden"
+    || paneStyle?.display === "none"
+    || paneStyle?.visibility === "hidden"
+  ) {
+    return false;
+  }
   return Boolean(
-    host?.isConnected
-    && host.clientWidth > 0
+    host.clientWidth > 0
     && host.clientHeight > 0
     && host.getClientRects().length > 0
   );
@@ -14940,6 +15276,7 @@ function applyBrowserChromeModeToSessions() {
 function browserViewBounds(session) {
   const content = session?.content;
   if (!content?.isConnected) return null;
+  if (content.closest(".pane-keepalive")) return null;
   const rect = content.getBoundingClientRect();
   const width = Math.ceil(rect.width > 0 ? rect.width : (content.clientWidth || 0));
   const height = Math.ceil(rect.height > 0 ? rect.height : (content.clientHeight || 0));
@@ -17444,7 +17781,6 @@ function renderSettingsInspector(options = {}) {
       true,
       "motion speed animation transition snappy balanced calm smooth fast chrome ui timing"
     ));
-    performanceSection.append(settingRow("Cursor blink", toggleInput(state.settings.terminalCursorBlink, (checked) => updateSettings({ terminalCursorBlink: checked })), false, "terminal cursor blink caret motion repaint lag performance"));
     const startupSelect = document.createElement("select");
     startupSelect.className = "setting-select";
     startupSelect.dataset.settingControl = "terminalStartupMode";
@@ -17622,10 +17958,6 @@ function renderSettingsInspector(options = {}) {
     cursorSelect.value = state.settings.terminalCursorStyle;
     cursorSelect.onchange = () => updateSettings({ terminalCursorStyle: cursorSelect.value });
     terminalSection.append(settingRow("Cursor", cursorSelect, false, "terminal cursor line bar block underline powershell caret shape"));
-    const cursorBlinkToggle = toggleInput(state.settings.terminalCursorBlink, (checked) => updateSettings({ terminalCursorBlink: checked }));
-    const cursorBlinkInput = cursorBlinkToggle.querySelector("input");
-    if (cursorBlinkInput) cursorBlinkInput.dataset.settingControl = "terminalCursorBlink";
-    terminalSection.append(settingRow("Cursor blink", cursorBlinkToggle));
     const multilinePasteToggle = toggleInput(state.settings.terminalConfirmMultilinePaste, (checked) => updateSettings({ terminalConfirmMultilinePaste: checked }));
     const multilinePasteInput = multilinePasteToggle.querySelector("input");
     if (multilinePasteInput) multilinePasteInput.dataset.settingControl = "terminalConfirmMultilinePaste";
@@ -17669,7 +18001,7 @@ function renderSettingsInspector(options = {}) {
     ));
     const colorActions = document.createElement("div");
     colorActions.className = "settings-actions";
-    colorActions.dataset.settingsSearch = normalizeSettingsQuery("terminal color text typography cycle reset default background foreground cursor save copy paste terminal profile setup reusable clipboard json font size line height padding history shell cursor blink shape");
+    colorActions.dataset.settingsSearch = normalizeSettingsQuery("terminal color text typography cycle reset default background foreground cursor save copy paste terminal profile setup reusable clipboard json font size line height padding history shell cursor shape steady");
     const terminalColorsReset = isTerminalColorPresetIdActive("cmux");
     const terminalTextDefault = terminalTextSettings.every((key) => state.settings[key] === defaultSettings[key]);
     const terminalSetupDefault = terminalSetupSettingsAreDefault();
@@ -17696,12 +18028,12 @@ function renderSettingsInspector(options = {}) {
     cycleTerminalColors.dataset.terminalAction = "cycle-colors";
     cycleTerminalColors.disabled = terminalColorCycle.disabled;
     cycleTerminalColors.title = terminalColorCycle.title;
-    const resetTerminalText = settingsActionButton("Reset text", resetTerminalTextSettings, "", `terminal text typography font size line height padding cursor blink shape reset default ${terminalTextDefault ? "active current " : ""}`);
+    const resetTerminalText = settingsActionButton("Reset text", resetTerminalTextSettings, "", `terminal text typography font size line height padding cursor shape steady reset default ${terminalTextDefault ? "active current " : ""}`);
     resetTerminalText.dataset.terminalAction = "reset-text";
     resetTerminalText.disabled = terminalTextDefault;
     resetTerminalText.title = terminalTextDefault
       ? "Terminal text and cursor already use defaults."
-      : "Reset terminal font, spacing, cursor shape, and cursor blink.";
+      : "Reset terminal font, spacing, and cursor shape.";
     const resetTerminalColors = settingsActionButton("Reset terminal colors", () => applyTerminalColorPresetById("cmux"), "", `terminal color reset default background foreground cursor ${terminalColorsReset ? "active current " : ""}`);
     resetTerminalColors.dataset.terminalAction = "reset-colors";
     resetTerminalColors.disabled = terminalColorsReset;
@@ -20915,12 +21247,12 @@ const browserWorkflowPresets = [
   {
     id: "paneSearch",
     label: "Pane search",
-    body: "Use the default search page inside cmux and suspend hidden browser panes.",
+    body: "Use the default search page inside cmux while keeping browser panes live.",
     settings: {
       browserHomeUrl: "https://www.google.com",
       browserLaunchMode: "pane",
       externalBrowserProfileId: "system",
-      browserSuspendInactive: true,
+      browserSuspendInactive: false,
       browserChromeMode: "full",
       browserZoom: "100",
       browserFullscreenMode: "pane"
@@ -20934,7 +21266,7 @@ const browserWorkflowPresets = [
       browserHomeUrl: "https://github.com",
       browserLaunchMode: "external",
       externalBrowserProfileId: "system",
-      browserSuspendInactive: true,
+      browserSuspendInactive: false,
       browserChromeMode: "full",
       browserZoom: "100",
       browserFullscreenMode: "pane"
@@ -26174,10 +26506,10 @@ const performanceTuningPresets = [
       backgroundReadability: "balanced",
       interfaceDepth: "soft",
       terminalStartupMode: "fast",
-      terminalPauseInactiveOutput: true,
-      terminalSmoothResumedOutput: true,
-      terminalCursorBlink: true,
-      browserSuspendInactive: true,
+      terminalPauseInactiveOutput: false,
+      terminalSmoothResumedOutput: false,
+      terminalCursorBlink: false,
+      browserSuspendInactive: false,
       browserChromeMode: "full",
       terminalPadding: 8,
       terminalScrollback: 12000
@@ -26226,7 +26558,7 @@ const performanceTuningPresets = [
       terminalPauseInactiveOutput: true,
       terminalSmoothResumedOutput: true,
       terminalCursorBlink: false,
-      browserSuspendInactive: true,
+      browserSuspendInactive: false,
       browserChromeMode: "compact",
       terminalPadding: 4,
       terminalScrollback: 6000
@@ -26275,7 +26607,7 @@ const performanceTuningPresets = [
       terminalPauseInactiveOutput: true,
       terminalSmoothResumedOutput: true,
       terminalCursorBlink: false,
-      browserSuspendInactive: true,
+      browserSuspendInactive: false,
       browserChromeMode: "compact",
       terminalPadding: 4,
       terminalScrollback: 4000
@@ -26284,7 +26616,7 @@ const performanceTuningPresets = [
   {
     id: "browserHeavy",
     label: "Browser heavy",
-    body: "Keeps multi-preview work lighter by suspending hidden browsers and reducing terminal repaint load.",
+    body: "Keeps multi-preview work lighter while leaving browser panes live.",
     settings: {
       performanceMode: true,
       adaptivePerformance: true,
@@ -26324,7 +26656,7 @@ const performanceTuningPresets = [
       terminalPauseInactiveOutput: true,
       terminalSmoothResumedOutput: true,
       terminalCursorBlink: false,
-      browserSuspendInactive: true,
+      browserSuspendInactive: false,
       browserChromeMode: "compact",
       terminalPadding: 4,
       terminalScrollback: 8000
@@ -26373,7 +26705,7 @@ const performanceTuningPresets = [
       terminalPauseInactiveOutput: true,
       terminalSmoothResumedOutput: true,
       terminalCursorBlink: false,
-      browserSuspendInactive: true,
+      browserSuspendInactive: false,
       browserChromeMode: "compact",
       terminalPadding: 6,
       terminalScrollback: 10000
@@ -26421,7 +26753,7 @@ const performanceTuningPresets = [
       terminalStartupMode: "fast",
       terminalPauseInactiveOutput: false,
       terminalSmoothResumedOutput: false,
-      terminalCursorBlink: true,
+      terminalCursorBlink: false,
       browserSuspendInactive: false,
       browserChromeMode: "full",
       terminalPadding: 8,
@@ -26658,17 +26990,6 @@ const performanceHealthCheckDefinitions = [
       backgroundBlur: 0
     }),
     search: "render load slow frame frames over budget stabilize performance mode lighter chrome reduce motion flat depth background effects lag jank"
-  },
-  {
-    id: "cursorBlink",
-    label: "Cursor blink",
-    body: "Stops terminal cursor blinking so panes repaint less during lag tuning.",
-    actionLabel: "Steady",
-    readyLabel: "Steady",
-    issue: () => state.settings.terminalCursorBlink,
-    meta: () => state.settings.terminalCursorBlink ? "Blinking" : "Steady",
-    updates: () => ({ terminalCursorBlink: false }),
-    search: "terminal cursor blink caret motion repaint lag"
   },
   {
     id: "backgroundWeight",
@@ -27154,7 +27475,7 @@ function performanceSetupSummaryForSettings(settings) {
     terminalStartup: optionLabel(terminalStartupOptions, normalized.terminalStartupMode, normalized.terminalStartupMode),
     inactiveOutput: normalized.terminalPauseInactiveOutput ? "Paused" : "Live",
     resume: normalized.terminalSmoothResumedOutput ? "Smooth" : "Immediate",
-    cursor: normalized.terminalCursorBlink ? "Blinking" : "Steady cursor",
+    cursor: "Steady cursor",
     inactiveBrowsers: normalized.browserSuspendInactive ? "Suspended" : "Live",
     browserChrome,
     padding: `${normalized.terminalPadding}px padding`,
@@ -32810,7 +33131,7 @@ function tunePerformanceNow({ automatic = false, reason = "manual tune" } = {}) 
     terminalPauseInactiveOutput: true,
     terminalSmoothResumedOutput: true,
     terminalCursorBlink: false,
-    browserSuspendInactive: true
+    browserSuspendInactive: false
   });
   if (!changed) {
     toast(automatic ? "Performance guard already tuned." : "Performance tune already active.");
@@ -33430,8 +33751,8 @@ function refreshTerminalSetupActions() {
   updateTerminalSetupAction(
     elements.inspectorBody.querySelector('[data-terminal-action="reset-text"]'),
     terminalTextDefault,
-    terminalTextDefault ? "Terminal text and cursor already use defaults." : "Reset terminal font, spacing, cursor shape, and cursor blink.",
-    `terminal text typography font size line height padding cursor blink shape reset default ${terminalTextDefault ? "active current " : ""}`
+    terminalTextDefault ? "Terminal text and cursor already use defaults." : "Reset terminal font, spacing, and cursor shape.",
+    `terminal text typography font size line height padding cursor shape steady reset default ${terminalTextDefault ? "active current " : ""}`
   );
 
   const terminalColorsReset = isTerminalColorPresetIdActive("cmux");
@@ -33455,8 +33776,8 @@ function terminalSettingsPreviewPanel() {
   const panel = document.createElement("div");
   const colors = terminalTheme();
   const cursorStyle = state.settings.terminalCursorStyle || defaultSettings.terminalCursorStyle;
-  panel.className = `terminal-settings-preview cursor-${cursorStyle}${state.settings.terminalCursorBlink ? " cursor-blink" : ""}`;
-  panel.dataset.settingsSearch = normalizeSettingsQuery("terminal preview font size line height padding cursor blink color scrollback shell");
+  panel.className = `terminal-settings-preview cursor-${cursorStyle}`;
+  panel.dataset.settingsSearch = normalizeSettingsQuery("terminal preview font size line height padding steady cursor color scrollback shell");
   panel.style.setProperty("--terminal-preview-background", colors.background);
   panel.style.setProperty("--terminal-preview-foreground", colors.foreground);
   panel.style.setProperty("--terminal-preview-cursor", colors.cursor);
@@ -33484,7 +33805,7 @@ function terminalSettingsPreviewPanel() {
   panel.querySelector("[data-terminal-preview-size]").textContent = `${state.settings.terminalFontSize}px`;
   panel.querySelector("[data-terminal-preview-line]").textContent = formatLineHeight(state.settings.terminalLineHeight);
   panel.querySelector("[data-terminal-preview-padding]").textContent = `${state.settings.terminalPadding}px`;
-  panel.querySelector("[data-terminal-preview-cursor]").textContent = `${optionLabel(terminalCursorStyles, cursorStyle, "Block")}${state.settings.terminalCursorBlink ? " blink" : ""}`;
+  panel.querySelector("[data-terminal-preview-cursor]").textContent = `${optionLabel(terminalCursorStyles, cursorStyle, "Block")} steady`;
   panel.querySelector("[data-terminal-preview-history]").textContent = String(state.settings.terminalScrollback);
   return panel;
 }
@@ -35987,7 +36308,7 @@ const terminalReadabilityPresets = [
       terminalPadding: 8,
       terminalScrollback: 12000,
       terminalCursorStyle: "bar",
-      terminalCursorBlink: true
+      terminalCursorBlink: false
     }
   },
   {
@@ -36001,7 +36322,7 @@ const terminalReadabilityPresets = [
       terminalPadding: 10,
       terminalScrollback: 16000,
       terminalCursorStyle: "block",
-      terminalCursorBlink: true
+      terminalCursorBlink: false
     }
   },
   {
@@ -36030,7 +36351,7 @@ function terminalSetupSummaryForSettings(settings) {
     lineHeight: formatLineHeight(normalized.terminalLineHeight),
     padding: `${normalized.terminalPadding}px`,
     history: `${Number(normalized.terminalScrollback || 0).toLocaleString()} history`,
-    cursor: `${optionLabel(terminalCursorStyles, normalized.terminalCursorStyle, normalized.terminalCursorStyle)}${normalized.terminalCursorBlink ? " blink" : ""}`,
+    cursor: `${optionLabel(terminalCursorStyles, normalized.terminalCursorStyle, normalized.terminalCursorStyle)} steady`,
     paste: normalized.terminalConfirmMultilinePaste ? "Confirm multiline paste" : "Paste directly",
     shell: optionLabel(terminalProfiles, normalized.terminalProfile, normalized.terminalProfile),
     colors: terminalColorEffectiveForSettings(normalized)
@@ -39370,7 +39691,7 @@ function showPanelContextMenu(event, panel) {
       : contextMenuButton("New browser tab", () => newBrowserTabFromPanel(panel), false, "", { icon: "browserPlus" }),
     contextMenuButton("Split right", () => splitPanel(panel, "right"), false, "", { icon: "splitRight" }),
     contextMenuButton("Split down", () => splitPanel(panel, "down"), false, "", { icon: "splitDown" }),
-    contextMenuButton(isPanelMinimized(panel) ? "Restore pane" : "Minimize pane", () => togglePaneMinimized(panel.id), false, "", {
+    contextMenuButton(isPanelMinimized(panel) ? "Restore pane" : "Minimize pane", () => togglePaneMinimized(panel.id, { focus: false }), false, "", {
       icon: isPanelMinimized(panel) ? "maximize" : "minimize"
     })
   );
@@ -39427,19 +39748,19 @@ function showPanelContextMenu(event, panel) {
       contextMenuButton("Clear terminal", () => clearTerminalPanel(panel), false, "", { icon: "close" }),
       (() => {
         const model = terminalTextSizeActionModel("increase", panel);
-        const action = contextMenuButton("Text larger", () => changePaneTerminalFontSize(panel.id, 1), model.disabled, "", { icon: "textSize" });
+        const action = contextMenuButton("Text larger", () => changePaneTerminalFontSize(panel.id, 1, { focus: false, status: false }), model.disabled, "", { icon: "textSize" });
         action.title = model.title;
         return action;
       })(),
       (() => {
         const model = terminalTextSizeActionModel("decrease", panel);
-        const action = contextMenuButton("Text smaller", () => changePaneTerminalFontSize(panel.id, -1), model.disabled, "", { icon: "textSize" });
+        const action = contextMenuButton("Text smaller", () => changePaneTerminalFontSize(panel.id, -1, { focus: false, status: false }), model.disabled, "", { icon: "textSize" });
         action.title = model.title;
         return action;
       })(),
       paneAction(
         "Reset text size",
-        () => resetPaneTerminalFontSize(panel.id),
+        () => resetPaneTerminalFontSize(panel.id, { focus: false, status: false }),
         terminalTextSizeActionModel("reset", panel).disabled,
         terminalTextSizeActionTitle("reset", panel),
         terminalTextSizeActionTitle("reset", panel),
@@ -39491,7 +39812,7 @@ function showPanelContextMenu(event, panel) {
       "",
       { icon: "layout" }
     ),
-    contextMenuButton(isPanelZoomed(panel, found.workspace) ? "Show all panes" : "Focus pane", () => togglePaneZoom(panel.id), false, "", { icon: "maximize" }),
+    contextMenuButton(isPanelZoomed(panel, found.workspace) ? "Show all panes" : "Focus pane", () => togglePaneZoom(panel.id, { focus: false }), false, "", { icon: "maximize" }),
     contextPaneLayoutButton("Equalize panes", "equal", found.workspace, { panelId: panel.id, icon: "layout" }),
     contextPaneLayoutButton("Grid layout", "grid", found.workspace, { panelId: panel.id, icon: "layout" }),
     contextPaneLayoutButton("Active pane wide", "activeWide", found.workspace, { panelId: panel.id, icon: "splitRight" }),
@@ -39852,7 +40173,7 @@ function showToolbarMenu(event) {
       contextMenuButton("Split down", () => splitActivePanel("down")),
       toolbarAction("Duplicate active pane", duplicateActivePanel, !panel, "Duplicate the focused pane.", paneRequiredTitle),
       toolbarAction("Reopen closed pane", reopenClosedPanel, state.closedPanels.length === 0, "Reopen the most recently closed pane.", "There are no closed panes to reopen."),
-      toolbarAction(zoomedPanelId ? "Show all panes" : "Focus active pane", () => togglePaneZoom(), !panel, zoomedPanelId ? "Return to the full split layout." : "Zoom the focused pane.", paneRequiredTitle),
+      toolbarAction(zoomedPanelId ? "Show all panes" : "Focus active pane", () => togglePaneZoom(panel?.id, { focus: false }), !panel, zoomedPanelId ? "Return to the full split layout." : "Zoom the focused pane.", paneRequiredTitle),
       toolbarAction("Minimize active pane", minimizeActivePane, !panel, "Minimize the focused pane.", paneRequiredTitle),
       toolbarAction("Restore minimized panes", () => restoreMinimizedPanes(workspace), minimizedPanes === 0, "Restore minimized panes in this workspace.", "There are no minimized panes to restore."),
       toolbarAction("Next pane", () => cycleActivePane(1), !multiPane, "Move focus to the next pane.", multiPaneRequiredTitle),
@@ -39896,9 +40217,9 @@ function showToolbarMenu(event) {
       toolbarAction("Paste to terminal", pasteClipboardToTerminal, !terminalActive, "Paste clipboard text into the focused terminal.", terminalRequiredTitle),
       toolbarAction("Clear active terminal", clearActiveTerminal, !terminalActive, "Clear the focused terminal.", terminalRequiredTitle),
       toolbarAction("Restart terminal", restartActiveTerminal, !terminalActive, "Restart the focused terminal.", terminalRequiredTitle),
-      toolbarAction("Text larger", () => changeTerminalFontSize(1, { panel }), terminalTextIncrease.disabled, terminalTextIncrease.title, terminalTextIncrease.title),
-      toolbarAction("Text smaller", () => changeTerminalFontSize(-1, { panel }), terminalTextDecrease.disabled, terminalTextDecrease.title, terminalTextDecrease.title),
-      toolbarAction("Reset text size", () => resetTerminalFontSize({ panel }), terminalTextReset.disabled, terminalTextReset.title, terminalTextReset.title),
+      toolbarAction("Text larger", () => changeTerminalFontSize(1, { panel, focus: false, status: false }), terminalTextIncrease.disabled, terminalTextIncrease.title, terminalTextIncrease.title),
+      toolbarAction("Text smaller", () => changeTerminalFontSize(-1, { panel, focus: false, status: false }), terminalTextDecrease.disabled, terminalTextDecrease.title, terminalTextDecrease.title),
+      toolbarAction("Reset text size", () => resetTerminalFontSize({ panel, focus: false, status: false }), terminalTextReset.disabled, terminalTextReset.title, terminalTextReset.title),
       toolbarAction("Choose terminal background", () => choosePanelBackgroundImage(panel), !terminalActive, paneBackgroundActionTitle("choose", panel, {
         ...focusedTerminalTitleOptions,
         availableTitle: "Choose a background for the focused terminal."
@@ -43535,9 +43856,54 @@ async function closeActiveWorkspace() {
   await closeWorkspaceById(workspace.id);
 }
 
+function optimisticCloseWorkspace(workspaceId) {
+  const workspace = state.data?.workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace) return false;
+  const panelIds = workspace.panels.map((panel) => panel.id).filter(Boolean);
+  for (const panelId of panelIds) {
+    removePanelFromAllPaneTrees(panelId);
+    cleanupPanel(panelId);
+  }
+  const treeDeleted = state.paneTrees.delete(workspace.id);
+  state.previousPanelIds.delete(workspace.id);
+  state.zoomedPanelIds.delete(workspace.id);
+  if (state.previousWorkspaceId === workspace.id) state.previousWorkspaceId = null;
+  if (treeDeleted) savePaneTreeLayouts(state.paneTrees);
+  if (state.data.workspaces.length <= 1) {
+    workspace.title = "cmux";
+    workspace.panels = [];
+    workspace.activePanelId = null;
+    state.data.activeWorkspaceId = workspace.id;
+    state.focusedPanelId = null;
+    state.lastInteractedPanelId = null;
+    refreshWorkspaceCounts(workspace);
+    cleanupPaneLayouts(allPanelIds());
+    render();
+    return true;
+  }
+  state.data.workspaces = state.data.workspaces.filter((candidate) => candidate.id !== workspace.id);
+  if (state.data.activeWorkspaceId === workspace.id) {
+    state.data.activeWorkspaceId = state.data.workspaces[0]?.id || "";
+    const nextWorkspace = activeWorkspace();
+    const nextPanel = focusablePanelForWorkspace(nextWorkspace);
+    state.focusedPanelId = nextPanel?.id || null;
+    state.lastInteractedPanelId = nextPanel?.id || null;
+  }
+  cleanupPaneLayouts(allPanelIds());
+  render();
+  return true;
+}
+
 async function closeWorkspaceById(workspaceId) {
   if (!workspaceId) return;
-  await api(`/api/workspaces/${workspaceId}`, { method: "DELETE" });
+  const key = `close-workspace:${workspaceId}`;
+  if (isUiOperationActive(key)) return false;
+  return withUiOperation(key, "close-workspace", "Closing workspace...", async () => {
+    await api(`/api/workspaces/${workspaceId}`, { method: "DELETE" });
+    optimisticCloseWorkspace(workspaceId);
+    await loadState();
+    return true;
+  });
 }
 
 async function closeEmptyWorkspaces(options = {}) {
@@ -44973,7 +45339,7 @@ function consumeCtrlWheelChrome(event) {
   return true;
 }
 
-function setPaneMinimized(panelId, minimized = true) {
+function setPaneMinimized(panelId, minimized = true, options = {}) {
   const found = findPanelState(panelId);
   if (!found) return false;
   if (!minimized) markInteractedPanel(panelId);
@@ -44990,13 +45356,13 @@ function setPaneMinimized(panelId, minimized = true) {
       if (isActiveWorkspace) {
         state.focusedPanelId = nextPanel?.id || null;
         state.lastInteractedPanelId = nextPanel?.id || null;
-        if (nextPanel) focusTerminalSession(nextPanel.id);
+        if (options.focus !== false && nextPanel) focusTerminalSession(nextPanel.id);
       }
     } else if (isActiveWorkspace && state.focusedPanelId === panelId) {
       const nextPanel = firstUnminimizedPanel(found.workspace, panelId);
       state.focusedPanelId = nextPanel?.id || null;
       state.lastInteractedPanelId = nextPanel?.id || null;
-      if (nextPanel) focusTerminalSession(nextPanel.id);
+      if (options.focus !== false && nextPanel) focusTerminalSession(nextPanel.id);
     } else if (isActiveWorkspace && state.lastInteractedPanelId === panelId) {
       state.lastInteractedPanelId = firstUnminimizedPanel(found.workspace, panelId)?.id || null;
     }
@@ -45012,14 +45378,14 @@ function setPaneMinimized(panelId, minimized = true) {
   scheduleRender();
   if (!shouldMinimize) {
     showPaneSwitchHud(found.panel, found.workspace);
-    focusTerminalSession(panelId);
+    if (options.focus !== false) focusTerminalSession(panelId);
   }
   return true;
 }
 
-function togglePaneMinimized(panelId = activePaneActionTarget()?.id) {
+function togglePaneMinimized(panelId = activePaneActionTarget()?.id, options = {}) {
   if (!panelId) return false;
-  return setPaneMinimized(panelId, !state.minimizedPanelIds.has(panelId));
+  return setPaneMinimized(panelId, !state.minimizedPanelIds.has(panelId), options);
 }
 
 function restorePane(panelId) {
@@ -45056,7 +45422,7 @@ function restoreMinimizedPanes(workspace = activeWorkspace()) {
   return true;
 }
 
-function togglePaneZoom(panelId = activePaneActionTarget()?.id) {
+function togglePaneZoom(panelId = activePaneActionTarget()?.id, options = {}) {
   if (!panelId) return;
   const found = findPanelState(panelId);
   if (!found) return;
@@ -45069,7 +45435,7 @@ function togglePaneZoom(panelId = activePaneActionTarget()?.id) {
   state.focusedPanelId = panelId;
   refreshAppStateSignature();
   scheduleRender();
-  focusTerminalSession(panelId);
+  if (options.focus !== false) focusTerminalSession(panelId);
   const session = state.terminals.get(panelId);
   if (session) requestAnimationFrame(() => scheduleFitTerminal(session, true));
 }
@@ -46564,7 +46930,7 @@ function changeTerminalFontSize(delta, options = {}) {
 function changePaneTerminalFontSize(panelId, delta, options = {}) {
   const found = findPanelState(panelId);
   if (!found || found.panel.type !== "terminal") return false;
-  focusPanel(panelId);
+  if (options.focus !== false) focusPanel(panelId);
   return changeTerminalFontSize(delta, { panel: found.panel, ...options });
 }
 
@@ -46572,7 +46938,12 @@ function resetTerminalFontSize(options = {}) {
   const panel = resolveTerminalPanel(options.panel || (options.event ? keyboardPanelFromEvent(options.event) : null) || activePaneActionTarget())
     || activeTerminalPanelForSettings();
   if (!panel) return false;
-  markInteractedPanel(panel.id);
+  if (options.focus === false) {
+    const active = activeWorkspace();
+    if (active?.activePanelId === panel.id) markInteractedPanel(panel.id);
+  } else {
+    markInteractedPanel(panel.id);
+  }
   if (!panelHasTerminalFontSize(panel)) {
     if (options.toast !== false) toast(`Pane text already uses ${state.settings.terminalFontSize}px default.`);
     return false;
@@ -46596,7 +46967,7 @@ function resetTerminalFontSize(options = {}) {
 function resetPaneTerminalFontSize(panelId, options = {}) {
   const found = findPanelState(panelId);
   if (!found || found.panel.type !== "terminal") return false;
-  focusPanel(panelId);
+  if (options.focus !== false) focusPanel(panelId);
   return resetTerminalFontSize({ panel: found.panel, ...options });
 }
 
@@ -46998,9 +47369,11 @@ async function restartSettingsTerminal() {
 }
 
 async function restartPanel(panelId) {
+  const result = await api(`/api/panels/${panelId}/restart`, { method: "POST" });
+  if (!result?.ok) return false;
   cleanupPanel(panelId);
-  await api(`/api/panels/${panelId}/restart`, { method: "POST" });
   await loadState();
+  return true;
 }
 
 async function closeActivePanel() {
@@ -47152,7 +47525,6 @@ document.getElementById("newWorkspaceButton").onclick = () => createWorkspace();
 document.getElementById("splitRightButton").onclick = () => splitActivePanel("right");
 document.getElementById("splitDownButton").onclick = () => splitActivePanel("down");
 document.getElementById("toolsMenuButton").onclick = showToolbarMenu;
-document.getElementById("settingsButton").onclick = () => openInspector("settings");
 document.getElementById("renameWorkspaceButton").onclick = () => renameActiveWorkspace();
 document.getElementById("colorWorkspaceButton").onclick = () => cycleWorkspaceColor();
 document.getElementById("toggleSidebarButton").onclick = () => toggleSidebar();
@@ -47437,8 +47809,8 @@ async function toggleWindowMaximize() {
 }
 
 const windowControlIcons = {
-  maximize: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="7" y="7" width="10" height="10" rx="1"></rect></svg>`,
-  restore: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 8h9v9H8z"></path><path d="M6 15V6h9"></path></svg>`
+  maximize: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"></rect></svg>`,
+  restore: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="8.5" y="8.5" width="8" height="8" rx="1.25"></rect><path d="M6.5 14.5v-8h8"></path></svg>`
 };
 
 function setWindowControlIcon(button, icon) {
